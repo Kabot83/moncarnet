@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ChevronDown, ClipboardList, ImagePlus, Plus, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
+import { NutritionLive } from '@/components/NutritionPanel'
 import { SinglePhotoField, usePhotoInput } from '@/components/PhotoPicker'
 import { Button, IconButton } from '@/components/ui/Button'
 import { useConfirm, useToast } from '@/components/ui/Feedback'
@@ -15,6 +16,7 @@ import { formatNumber, parseIngredientLine, parseQuantity } from '@/lib/units'
 import { CATEGORIES, DIFFICULTIES, type Draft, type Ingredient, NOTE_FIELDS, type Recipe, type Step } from '@/models/types'
 import { deleteDraft, saveDraft } from '@/services/drafts'
 import { ValidationError, emptyIngredient, emptyRecipe, emptyStep, saveRecipe } from '@/services/recipes'
+import { useSettings } from '@/services/settings'
 
 const UNIT_SUGGESTIONS = ['g', 'kg', 'ml', 'cl', 'l', 'c. à soupe', 'c. à café', 'pincée', 'gousse', 'tranche', 'sachet', 'brin', 'boîte', 'pot', 'feuille']
 
@@ -32,6 +34,7 @@ export default function RecipeEditPage() {
   const navigate = useSafeNavigate()
   const toast = useToast()
   const confirm = useConfirm()
+  const settings = useSettings()
   const draftId = id ? `edit:${id}` : (params.get('draft') ?? 'new')
 
   const [recipe, setRecipe] = useState<Recipe | null>(null)
@@ -242,6 +245,7 @@ export default function RecipeEditPage() {
           >
             Ajouter un ingrédient
           </Button>
+          {settings.nutritionEnabled && <NutritionLive ingredients={recipe.ingredients} servings={recipe.servings} />}
         </section>
 
         <section>
@@ -360,7 +364,7 @@ function IngredientEditor({
             ing.group && `Groupe : ${ing.group}`,
             !ing.scalable && 'Quantité fixe',
             ing.toTaste && 'Selon le goût',
-            ing.nutrition && `Nutrition : ${ing.nutrition.food.name}`,
+            ing.nutrition && `Nutrition : ${ing.nutrition.food.name} (choisi)`,
             ing.nutritionExcluded && 'Hors calcul nutritionnel',
             ing.note,
           ]
@@ -387,7 +391,7 @@ function IngredientEditor({
                 Nutrition : <strong>{ing.nutrition.food.name}</strong>
               </span>
               <Button size="sm" variant="ghost" onClick={() => onChange({ nutrition: null })}>
-                Retirer
+                Automatique
               </Button>
             </div>
           )}

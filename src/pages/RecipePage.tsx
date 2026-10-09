@@ -401,7 +401,7 @@ export default function RecipePage() {
           {settings.nutritionEnabled && (
             <MenuItem
               icon={Apple}
-              label={ingMenu?.nutrition ? 'Valeurs nutritionnelles : ' + ingMenu.nutrition.food.name : 'Associer les valeurs nutritionnelles'}
+              label={ingMenu?.nutrition ? 'Nutrition : ' + ingMenu.nutrition.food.name : 'Nutrition : vérifier ou corriger'}
               onClick={() => {
                 setFoodFor(ingMenu)
                 setIngMenu(null)

@@ -1,19 +1,21 @@
 /**
  * Section « Nutrition » de la fiche recette.
- * Calcul à partir des ingrédients associés (CIQUAL / Open Food Facts / saisie), en suivant
- * les quantités ajustées. Fiabilité affichée : complet, estimatif ou incomplet.
+ * Calcul automatique : chaque ingrédient est reconnu (choix de l'utilisateur, préférence
+ * mémorisée, dictionnaire CIQUAL, recherche approchée) et converti en poids (poids usuels
+ * signalés). Fiabilité affichée : vérifié, estimation ou partiel. Un geste pour corriger.
  */
-import { AlertTriangle, CheckCircle2, ChevronRight, CircleHelp, Link2, Scale, Sparkles } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronRight, CircleHelp, Scale, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { estimateNutrition } from '@/ai/chef'
 import { type AiError, toAiError } from '@/ai/errors'
-import { scaledServings } from '@/lib/scaling'
+import { IDENTITY_SCALE, scaledServings } from '@/lib/scaling'
 import { formatNumber } from '@/lib/units'
 import { type Ingredient, MAIN_NUTRIENTS, type Recipe, type ScaleState } from '@/models/types'
 import { CIQUAL_CITATION } from '@/nutrition/ciqual'
-import { LABELS, type MainKey, type NutritionMode, type Reliability, UNITS, computeNutrition, cookedWeightNeedsReview, formatNutrient, nutritionView, rawOriginalGrams } from '@/nutrition/engine'
+import { type IngredientRow, LABELS, type MainKey, type NutritionMode, type NutritionResult, type Reliability, type RowQuality, UNITS, computeNutrition, cookedWeightNeedsReview, formatNutrient, nutritionView, rawOriginalGrams } from '@/nutrition/engine'
 import { setCookedWeight } from '@/nutrition/foods'
 import { OFF_ATTRIBUTION } from '@/nutrition/off'
+import { useAutoMatches } from '@/nutrition/useAutoNutrition'
 import { patchRecipe } from '@/services/recipes'
 import { AiErrorBox } from './AiErrorBox'
 import { FoodLinkSheet } from './nutrition/FoodLinkSheet'
@@ -21,6 +23,7 @@ import { Button } from './ui/Button'
 import { useToast } from './ui/Feedback'
 import { NumberInput, Segmented } from './ui/Fields'
 import { Sheet } from './ui/Sheet'
+import { Spinner } from './ui/Spinner'
 
 const MODE_KEY = 'mc-nutrition-mode'
 const readMode = (): NutritionMode => {
@@ -33,9 +36,33 @@ const readMode = (): NutritionMode => {
 }
 
 const RELIABILITY: Record<Reliability, { label: string; className: string; icon: typeof CheckCircle2 }> = {
-  complete: { label: 'Calcul complet', className: 'bg-sage-soft text-sage', icon: CheckCircle2 },
-  estimate: { label: 'Calcul estimatif', className: 'bg-[color-mix(in_oklab,var(--c-gold)_18%,transparent)] text-gold', icon: CircleHelp },
-  incomplete: { label: 'Données incomplètes', className: 'bg-danger-soft text-danger', icon: AlertTriangle },
+  complete: { label: 'Calcul vérifié', className: 'bg-sage-soft text-sage', icon: CheckCircle2 },
+  estimate: { label: 'Estimation', className: 'bg-[color-mix(in_oklab,var(--c-gold)_18%,transparent)] text-gold', icon: CircleHelp },
+  incomplete: { label: 'Partiel', className: 'bg-danger-soft text-danger', icon: AlertTriangle },
+}
+
+/** Fiabilité de chaque ingrédient, telle qu'affichée. */
+export const QUALITY: Record<RowQuality, { label: string; dot: string }> = {
+  verified: { label: 'Vérifié', dot: 'bg-sage' },
+  estimated: { label: 'Estimé', dot: 'bg-gold' },
+  uncertain: { label: 'Incertain', dot: 'bg-terra' },
+  missing: { label: 'Manquant', dot: 'bg-danger' },
+  ignored: { label: 'Non compté', dot: 'bg-line' },
+}
+
+/** Résumé discret : « 4 estimés · 1 à confirmer ». */
+function qualityCounts(result: NutritionResult) {
+  const c: Record<RowQuality, number> = { verified: 0, estimated: 0, uncertain: 0, missing: 0, ignored: 0 }
+  for (const r of result.rows) if (r.ingredient.name.trim()) c[r.quality]++
+  return c
+}
+
+/** Calcul complet d'une recette, avec reconnaissance automatique (null pendant le chargement). */
+export function useRecipeNutrition(ingredients: Recipe['ingredients'], scale: ScaleState) {
+  const auto = useAutoMatches(ingredients)
+  const result = useMemo(() => (auto ? computeNutrition(ingredients, scale, auto) : null), [ingredients, scale, auto])
+  const rawOriginal = useMemo(() => (auto ? rawOriginalGrams(ingredients, auto) : 0), [ingredients, auto])
+  return { auto, result, rawOriginal }
 }
 
 const SHORT: Record<MainKey, string> = { kcal: 'Calories', protein: 'Protéines', carbs: 'Glucides', fat: 'Lipides' }
@@ -55,30 +82,22 @@ export function NutritionPanel({ recipe, scale }: { recipe: Recipe; scale: Scale
     }
   }
 
-  const result = useMemo(() => computeNutrition(recipe.ingredients, scale), [recipe.ingredients, scale])
-  const rawOriginal = useMemo(() => rawOriginalGrams(recipe.ingredients), [recipe.ingredients])
+  const { auto, result, rawOriginal } = useRecipeNutrition(recipe.ingredients, scale)
+
+  if (!result || !auto)
+    return (
+      <div className="flex items-center gap-2 rounded-[var(--radius-card)] bg-paper p-4 text-sm text-muted shadow-[var(--shadow-card)]" role="status">
+        <Spinner size={16} /> Calcul des valeurs nutritionnelles…
+      </div>
+    )
+
   const view = nutritionView(result, mode, recipe, scale, rawOriginal)
-  const linked = recipe.ingredients.some((i) => i.nutrition)
   const servings = scaledServings(scale, recipe.servings)
   const rel = RELIABILITY[view.reliability]
-  const sources = new Set(recipe.ingredients.map((i) => i.nutrition?.food.source).filter(Boolean))
+  const sources = new Set(result.rows.filter((r) => r.status === 'ok').map((r) => r.link?.food.source))
   const needsReview = cookedWeightNeedsReview(recipe, rawOriginal)
-
-  if (!linked)
-    return (
-      <>
-        <div className="rounded-[var(--radius-card)] bg-paper p-4 shadow-[var(--shadow-card)]">
-          <p className="text-[15px]">Associez les ingrédients aux tables nutritionnelles pour calculer calories, protéines, glucides et lipides.</p>
-          <p className="mt-1 text-sm text-muted">Table CIQUAL de l’ANSES (hors ligne) et produits de marque d’Open Food Facts.</p>
-          <Button className="mt-3" icon={<Link2 size={16} />} onClick={() => setDetailOpen(true)}>
-            Associer les ingrédients
-          </Button>
-          <LegacyNutrition recipe={recipe} />
-        </div>
-        <DetailSheet open={detailOpen} onClose={() => setDetailOpen(false)} recipe={recipe} scale={scale} onLink={setLinkFor} />
-        <FoodLinkSheet open={!!linkFor} onClose={() => setLinkFor(null)} recipeId={recipe.id} ingredient={linkFor} />
-      </>
-    )
+  const counts = qualityCounts(result)
+  const toFix = counts.missing + counts.uncertain
 
   const caption =
     mode === 'total'
@@ -151,21 +170,69 @@ export function NutritionPanel({ recipe, scale }: { recipe: Recipe; scale: Scale
           </ul>
         )}
 
+        <button type="button" onClick={() => setDetailOpen(true)} className="mt-2 flex w-full flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-muted" aria-label="Fiabilité par ingrédient">
+          {(['verified', 'estimated', 'uncertain', 'missing'] as const)
+            .filter((q) => counts[q] > 0)
+            .map((q) => (
+              <span key={q} className="inline-flex items-center gap-1">
+                <span className={`size-2 rounded-full ${QUALITY[q].dot}`} aria-hidden />
+                {counts[q]} {QUALITY[q].label.toLowerCase()}
+                {counts[q] > 1 ? 's' : ''}
+              </span>
+            ))}
+          {toFix > 0 && <span className="font-semibold text-terra">· Corriger</span>}
+        </button>
+
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <Button size="sm" variant="secondary" onClick={() => setDetailOpen(true)}>
-            Détail par ingrédient
+          <Button size="sm" variant="secondary" aria-label="Détail par ingrédient" onClick={() => setDetailOpen(true)}>
+            Détail
           </Button>
-          <Button size="sm" variant={needsReview ? 'soft' : 'secondary'} icon={<Scale size={15} />} onClick={() => setWeightOpen(true)}>
-            {recipe.cookedWeightG ? `Cuit : ${formatNumber(recipe.cookedWeightG, 0)} g${needsReview ? ' (à revoir)' : ''}` : 'Poids après cuisson'}
+          <Button
+            size="sm"
+            variant={needsReview ? 'soft' : 'secondary'}
+            icon={<Scale size={15} />}
+            aria-label={recipe.cookedWeightG ? undefined : 'Poids après cuisson'}
+            onClick={() => setWeightOpen(true)}
+          >
+            {recipe.cookedWeightG ? `Cuit : ${formatNumber(recipe.cookedWeightG, 0)} g${needsReview ? ' (à revoir)' : ''}` : 'Poids cuit'}
           </Button>
         </div>
         <Attribution sources={sources} />
+        {result.coverage.done === 0 && <LegacyNutrition recipe={recipe} />}
       </div>
 
-      <DetailSheet open={detailOpen} onClose={() => setDetailOpen(false)} recipe={recipe} scale={scale} onLink={setLinkFor} />
+      <DetailSheet open={detailOpen} onClose={() => setDetailOpen(false)} result={result} onLink={setLinkFor} />
       <CookedWeightSheet open={weightOpen} onClose={() => setWeightOpen(false)} recipe={recipe} rawOriginal={rawOriginal} rawComplete={result.rawGramsComplete} />
       <FoodLinkSheet open={!!linkFor} onClose={() => setLinkFor(null)} recipeId={recipe.id} ingredient={linkFor} />
     </>
+  )
+}
+
+/** Aperçu en direct dans l'éditeur : calculé pendant la saisie, sans aucune action. */
+export function NutritionLive({ ingredients, servings }: { ingredients: Recipe['ingredients']; servings: number | null }) {
+  const { result } = useRecipeNutrition(ingredients, IDENTITY_SCALE)
+  if (!result || result.coverage.expected === 0) return null
+  const view = nutritionView(result, 'total', { servings, cookedWeightG: null, cookedWeightRawG: null })
+  const partial = view.reliability === 'incomplete'
+  const per = servings && servings > 0 ? servings : null
+  const line = (d: number) => MAIN_NUTRIENTS.map((k) => `${k === 'kcal' ? '' : `${SHORT[k][0]} `}${partial ? '≥ ' : ''}${formatNutrient(k, (view.values[k] ?? 0) / d)} ${UNITS[k]}`).join(' · ')
+  return (
+    <div className="mt-3 rounded-2xl bg-sunken p-3 text-sm" aria-live="polite" aria-label="Aperçu nutritionnel">
+      <p className="tabular-nums">
+        <span className="font-semibold">Recette entière : </span>
+        {line(1)}
+      </p>
+      {per && (
+        <p className="tabular-nums">
+          <span className="font-semibold">Par portion ({formatNumber(per, 1)}) : </span>
+          {line(per)}
+        </p>
+      )}
+      <p className="mt-0.5 text-xs text-muted">
+        {RELIABILITY[view.reliability].label} · {result.coverage.done}/{result.coverage.expected} ingrédients calculés automatiquement
+        {result.blocking.length > 0 && ` · à préciser : ${result.blocking.map((r) => r.ingredient.name).join(', ')}`}
+      </p>
+    </div>
   )
 }
 
@@ -179,69 +246,99 @@ function Attribution({ sources }: { sources: Set<string | undefined> }) {
 }
 
 const STATUS_TEXT: Record<string, string> = {
-  unlinked: 'Aliment à associer',
+  unlinked: 'Ingrédient non reconnu : touchez pour choisir l’aliment',
+  toConfirm: 'Plusieurs aliments possibles : touchez pour choisir',
   noQuantity: 'Quantité non chiffrée',
-  noConversion: 'Poids à renseigner',
+  noConversion: 'Poids à préciser',
   excluded: 'Non compté',
   toTaste: 'Selon le goût (non compté)',
 }
 
-function DetailSheet({ open, onClose, recipe, scale, onLink }: { open: boolean; onClose: () => void; recipe: Recipe; scale: ScaleState; onLink: (i: Ingredient) => void }) {
-  const result = useMemo(() => computeNutrition(recipe.ingredients, scale), [recipe.ingredients, scale])
-  const sources = new Set(recipe.ingredients.map((i) => i.nutrition?.food.source).filter(Boolean))
+const SOURCE_NAME = { ciqual: 'CIQUAL', off: 'Open Food Facts', custom: 'Personnel' } as const
+
+function originText(r: IngredientRow): string {
+  if (r.ingredient.nutrition) return 'votre choix'
+  switch (r.match?.origin) {
+    case 'memory':
+      return 'votre choix habituel'
+    case 'dictionary':
+      return r.match.confidence === 'assumed' ? 'variante supposée' : 'reconnu'
+    case 'search':
+      return 'correspondance approchée'
+    default:
+      return ''
+  }
+}
+
+function DetailSheet({ open, onClose, result, onLink }: { open: boolean; onClose: () => void; result: NutritionResult; onLink: (i: Ingredient) => void }) {
+  const sources = new Set(result.rows.filter((r) => r.status === 'ok').map((r) => r.link?.food.source))
   return (
-    <Sheet open={open} onClose={onClose} size="tall" title="Détail par ingrédient" description="Touchez un ingrédient pour choisir ou corriger son aliment.">
+    <Sheet open={open} onClose={onClose} size="tall" title="Détail par ingrédient" description="Touchez un ingrédient pour changer l’aliment ou préciser son poids.">
       <ul className="space-y-2 pb-2">
-        {result.rows.map((r) => {
-          const ok = r.status === 'ok'
-          const blocking = r.status === 'unlinked' || r.status === 'noConversion' || r.status === 'noQuantity'
-          return (
-            <li key={r.ingredient.id}>
-              <button
-                type="button"
-                onClick={() => onLink(r.ingredient)}
-                className={`w-full rounded-2xl p-3 text-left shadow-[var(--shadow-card)] active:scale-[.99] ${blocking ? 'border border-danger/30 bg-danger-soft' : 'bg-paper'}`}
-              >
-                <span className="flex items-baseline justify-between gap-2">
-                  <span className="min-w-0 truncate font-medium">{r.ingredient.name}</span>
-                  <span className="shrink-0 text-sm tabular-nums text-muted">{r.grams != null ? `${formatNumber(r.grams, r.grams < 10 ? 1 : 0)} g` : ''}</span>
-                </span>
-                {ok ? (
-                  <>
-                    <span className="mt-0.5 block text-xs text-faint">
-                      {r.ingredient.nutrition!.food.source === 'ciqual' ? 'CIQUAL' : r.ingredient.nutrition!.food.source === 'off' ? 'Open Food Facts' : 'Personnel'} · {r.ingredient.nutrition!.food.name}
-                    </span>
-                    <span className="mt-1 block text-sm tabular-nums">
-                      {MAIN_NUTRIENTS.map((k) => {
-                        const c = r.cells[k]
-                        const txt = c?.value == null ? 'inconnu' : `${c.kind === 'trace' ? 'traces' : c.kind === 'below' ? '≈ 0' : formatNutrient(k, c.value)}`
-                        return `${k === 'kcal' ? '' : `${LABELS[k][0]} `}${txt}${c?.value == null || c.kind === 'trace' || c.kind === 'below' ? '' : ` ${UNITS[k]}`}`
-                      }).join(' · ')}
-                    </span>
-                    {r.approx.map((a) => (
-                      <span key={a} className="mt-0.5 block text-xs text-terra-strong">
-                        {a}
+        {result.rows
+          .filter((r) => r.ingredient.name.trim())
+          .map((r) => {
+            const ok = r.status === 'ok'
+            const q = QUALITY[r.quality]
+            const missing = r.quality === 'missing'
+            return (
+              <li key={r.ingredient.id}>
+                <button
+                  type="button"
+                  onClick={() => onLink(r.ingredient)}
+                  className={`w-full rounded-2xl p-3 text-left shadow-[var(--shadow-card)] active:scale-[.99] ${missing ? 'border border-danger/30 bg-danger-soft' : 'bg-paper'}`}
+                >
+                  <span className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 truncate font-medium">{r.ingredient.name}</span>
+                    <span className="shrink-0 text-sm tabular-nums text-muted">{r.grams != null ? `${formatNumber(r.grams, r.grams < 10 ? 1 : 0)} g` : ''}</span>
+                  </span>
+                  <span className="mt-0.5 flex items-center gap-1.5 text-xs text-faint">
+                    <span className={`size-2 shrink-0 rounded-full ${q.dot}`} aria-hidden />
+                    <span className="font-semibold text-muted">{q.label}</span>
+                    {r.link && (
+                      <span className="min-w-0 truncate">
+                        · {SOURCE_NAME[r.link.food.source]} · {r.link.food.name}
+                        {originText(r) ? ` (${originText(r)})` : ''}
                       </span>
-                    ))}
-                  </>
-                ) : (
-                  <span className={`mt-0.5 block text-sm ${blocking ? 'font-semibold text-danger' : 'text-muted'}`}>{r.message ?? STATUS_TEXT[r.status]}</span>
-                )}
-              </button>
-            </li>
-          )
-        })}
+                    )}
+                  </span>
+                  {ok ? (
+                    <>
+                      <span className="mt-1 block text-sm tabular-nums">
+                        {MAIN_NUTRIENTS.map((k) => {
+                          const c = r.cells[k]
+                          const txt = c?.value == null ? 'inconnu' : `${c.kind === 'trace' ? 'traces' : c.kind === 'below' ? '≈ 0' : formatNutrient(k, c.value)}`
+                          return `${k === 'kcal' ? '' : `${LABELS[k][0]} `}${txt}${c?.value == null || c.kind === 'trace' || c.kind === 'below' ? '' : ` ${UNITS[k]}`}`
+                        }).join(' · ')}
+                      </span>
+                      {r.approx.map((a) => (
+                        <span key={a} className="mt-0.5 block text-xs text-terra-strong">
+                          {a}
+                        </span>
+                      ))}
+                    </>
+                  ) : (
+                    <span className={`mt-0.5 block text-sm ${missing ? 'font-semibold text-danger' : 'text-muted'}`}>{r.message ?? STATUS_TEXT[r.status]}</span>
+                  )}
+                </button>
+              </li>
+            )
+          })}
       </ul>
       <div className="mt-2 rounded-2xl bg-sunken p-3 text-sm">
-        <p className="font-semibold">Total{result.blocking.length ? ' partiel' : ''}</p>
+        <p className="font-semibold">Total{result.blocking.length ? ' partiel (ingrédients manquants non comptés)' : ''}</p>
         <p className="tabular-nums">
-          {MAIN_NUTRIENTS.map((k) => `${LABELS[k]} ${formatNutrient(k, result.totals[k].value)} ${UNITS[k]}`).join(' · ')}
+          {MAIN_NUTRIENTS.map((k) => `${LABELS[k]} ${result.blocking.length ? '≥ ' : ''}${formatNutrient(k, result.totals[k].value)} ${UNITS[k]}`).join(' · ')}
         </p>
       </div>
+      <p className="mt-3 text-xs text-muted">
+        <strong>Vérifié</strong> : aliment et poids connus. <strong>Estimé</strong> : poids usuel (ex. 1 oignon ≈ 110 g) ou variante courante supposée. <strong>Incertain</strong> : correspondance approchée. <strong>Manquant</strong> : non compté.
+      </p>
       <Attribution sources={sources} />
     </Sheet>
   )
 }
+
 
 function CookedWeightSheet({ open, onClose, recipe, rawOriginal, rawComplete }: { open: boolean; onClose: () => void; recipe: Recipe; rawOriginal: number; rawComplete: boolean }) {
   const toast = useToast()
@@ -261,7 +358,7 @@ function CookedWeightSheet({ open, onClose, recipe, rawOriginal, rawComplete }: 
             <Button
               variant="secondary"
               onClick={async () => {
-                await setCookedWeight(recipe, null)
+                await setCookedWeight(recipe, null, rawOriginal)
                 toast.success('Poids après cuisson effacé')
                 onClose()
               }}
@@ -273,7 +370,7 @@ function CookedWeightSheet({ open, onClose, recipe, rawOriginal, rawComplete }: 
             block
             disabled={!value || value <= 0}
             onClick={async () => {
-              await setCookedWeight(recipe, value)
+              await setCookedWeight(recipe, value, rawOriginal)
               toast.success('Poids après cuisson enregistré')
               onClose()
             }}

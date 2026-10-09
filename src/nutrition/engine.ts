@@ -5,9 +5,10 @@
  * - Une valeur inconnue n'est JAMAIS remplacée par zéro : le total est alors « incomplet ».
  * - « traces » et « < x » (conventions CIQUAL) comptent pour 0 dans le total, mais le
  *   résultat devient « estimatif » et la borne haute est conservée.
- * - Aucun poids n'est inventé : une pièce sans poids renseigné, une « tasse » ou une pincée
- *   rendent l'ingrédient « non calculable » tant que l'utilisateur n'a pas indiqué son poids.
- *   Seule exception, signalée : sans masse volumique renseignée, 1 ml est compté pour 1 g.
+ * - Poids : valeur saisie par l'utilisateur, sinon poids usuel du dictionnaire (oignon ≈ 110 g,
+ *   1 c. à soupe d'huile ≈ 13,7 g…) TOUJOURS signalé comme estimation. Poids inconnu :
+ *   l'ingrédient n'est pas compté et le total est « partiel », sans bloquer le reste.
+ *   Sans masse volumique connue, 1 ml est compté pour 1 g (signalé).
  * - Les quantités viennent de `scaledQuantity` (module d'ajustement) : toujours recalculées
  *   depuis les quantités d'origine, sans arrondi intermédiaire.
  * - Les calculs internes ne sont jamais arrondis ; seul l'affichage arrondit.
@@ -15,6 +16,7 @@
 import { IDENTITY_SCALE, scaledQuantity, scaledServings } from '@/lib/scaling'
 import { normalizeUnit } from '@/lib/units'
 import { type FoodLink, type Ingredient, MAIN_NUTRIENTS, NUTRIENT_KEYS, type NutrientKey, type NutrientValue, type ScaleState } from '@/models/types'
+import type { AutoMap, AutoMatch, UsualConversion } from './auto'
 
 /** 1 kcal = 4,184 kJ (règlement UE 1169/2011). */
 export const KJ_PER_KCAL = 4.184
@@ -22,7 +24,7 @@ export const kjToKcal = (kj: number) => kj / KJ_PER_KCAL
 export const kcalToKj = (kcal: number) => kcal * KJ_PER_KCAL
 
 /** Volumes de référence des cuillères (mesures culinaires normalisées). */
-export const SPOON_ML: Record<string, number> = { 'c. à soupe': 15, 'c. à café': 5 }
+export const SPOON_ML: Record<string, number> = { 'c. à soupe': 15, 'c. à café': 5, tasse: 240 }
 
 export type Interpreted =
   | { kind: 'exact'; value: number }
@@ -72,13 +74,19 @@ export type AmountResult = Amount | { error: string }
  * Convertit une quantité de recette dans l'unité de référence de l'aliment.
  * Renvoie une erreur explicite plutôt que d'inventer un poids.
  */
-export function toBasisAmount(quantity: number, unit: string, link: FoodLink): AmountResult {
+export function toBasisAmount(quantity: number, unit: string, link: FoodLink, usual: UsualConversion = {}): AmountResult {
   const def = normalizeUnit(unit)
   const basis = link.food.basis
   const approx: string[] = []
+  // Masse volumique : saisie > préférence/valeur usuelle (signalée) > 1 g/ml (signalé).
+  const knownDensity = link.density ?? usual.density?.value ?? null
   const density = () => {
     if (link.density) return link.density
-    approx.push('Masse volumique non renseignée : 1 ml compté pour 1 g')
+    if (usual.density) {
+      if (usual.density.note) approx.push(spoonNote(def.canonical, usual.density.value) ?? usual.density.note)
+      return usual.density.value
+    }
+    approx.push('Masse volumique inconnue : 1 ml compté pour 1 g')
     return 1
   }
   let grams: number | null = null
@@ -86,28 +94,48 @@ export function toBasisAmount(quantity: number, unit: string, link: FoodLink): A
 
   if (def.kind === 'mass') grams = quantity * (def.toBase ?? 1)
   else if (def.kind === 'volume') ml = quantity * (def.toBase ?? 1)
-  else if (def.kind === 'spoon' && SPOON_ML[def.canonical] != null) ml = quantity * SPOON_ML[def.canonical]
-  else if (link.gramsPerUnit) grams = quantity * link.gramsPerUnit
-  else if (def.kind === 'count') return { error: 'Poids d’une pièce à renseigner' }
-  else if (def.kind === 'pinch') return { error: 'Poids d’une pincée à renseigner' }
-  else return { error: `Unité « ${unit} » : poids à renseigner` }
+  else if (def.kind === 'spoon' && SPOON_ML[def.canonical] != null) {
+    ml = quantity * SPOON_ML[def.canonical]
+    if (def.canonical === 'tasse') approx.push('1 tasse comptée 240 ml')
+  } else if (link.gramsPerUnit) grams = quantity * link.gramsPerUnit
+  else if (usual.gramsPerUnit) {
+    grams = quantity * usual.gramsPerUnit.grams
+    if (usual.gramsPerUnit.note) approx.push(usual.gramsPerUnit.note)
+  } else if (def.kind === 'count') return { error: 'Poids usuel inconnu : poids d’une pièce à préciser' }
+  else if (def.kind === 'pinch') return { error: 'Poids d’une pincée à préciser' }
+  else return { error: `Unité « ${unit} » : poids à préciser` }
 
   if (basis === '100g') {
     if (grams == null) grams = ml! * density()
-    return { basisAmount: grams, grams, approx }
+    return { basisAmount: grams, grams, approx: [...new Set(approx)] }
   }
   // Aliment exprimé pour 100 ml
   if (ml == null) ml = grams! / density()
-  if (grams == null) grams = ml * (link.density ?? 1)
-  if (!link.density && def.kind !== 'mass') approx.push('Poids estimé avec 1 ml = 1 g')
+  if (grams == null) grams = ml * (knownDensity ?? 1)
+  if (!knownDensity && def.kind !== 'mass') approx.push('Poids estimé avec 1 ml = 1 g')
   return { basisAmount: ml, grams, approx: [...new Set(approx)] }
+}
+
+/** « 1 c. à soupe ≈ 13,7 g (valeur usuelle) » : plus parlant qu'une masse volumique. */
+function spoonNote(canonical: string, density: number): string | null {
+  const ml = SPOON_ML[canonical]
+  if (!ml || canonical === 'tasse') return null
+  const g = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 1 }).format(ml * density)
+  return `Poids usuel estimé : 1 ${canonical} ≈ ${g} g`
 }
 
 // ---------------------------------------------------------------------------
 // Calcul par ingrédient et total
 // ---------------------------------------------------------------------------
 
-export type RowStatus = 'ok' | 'excluded' | 'toTaste' | 'unlinked' | 'noQuantity' | 'noConversion'
+export type RowStatus = 'ok' | 'excluded' | 'toTaste' | 'negligible' | 'unlinked' | 'toConfirm' | 'noQuantity' | 'noConversion'
+
+/**
+ * Fiabilité d'une ligne, telle qu'affichée :
+ * verified : référence sûre et poids connu ; estimated : poids usuel, variante supposée ou autre
+ * approximation ; uncertain : correspondance approchée ; missing : non compté (données manquantes).
+ */
+export type RowQuality = 'verified' | 'estimated' | 'uncertain' | 'missing' | 'ignored'
 
 export interface NutrientCell {
   /** Contribution (0 pour traces / sous le seuil), ou null si la teneur est inconnue. */
@@ -127,6 +155,10 @@ export interface IngredientRow {
   cells: Partial<Record<NutrientKey, NutrientCell>>
   approx: string[]
   message?: string
+  /** Référence utilisée (choisie, mémorisée ou reconnue automatiquement). */
+  link: FoodLink | null
+  match: AutoMatch | null
+  quality: RowQuality
 }
 
 export interface NutrientTotal {
@@ -152,22 +184,37 @@ export interface NutritionResult {
   coverage: { done: number; expected: number }
 }
 
-/** Calcule les apports de chaque ingrédient puis du total, pour un ajustement donné. */
-export function computeNutrition(ingredients: readonly Ingredient[], scale: ScaleState = IDENTITY_SCALE): NutritionResult {
+/**
+ * Calcule les apports de chaque ingrédient puis du total, pour un ajustement donné.
+ * `auto` : correspondances automatiques (module auto.ts). Sans elles, seules les références
+ * choisies par l'utilisateur sont comptées.
+ */
+export function computeNutrition(ingredients: readonly Ingredient[], scale: ScaleState = IDENTITY_SCALE, auto?: AutoMap | null): NutritionResult {
   const rows: IngredientRow[] = ingredients.map((ing) => {
-    const base: IngredientRow = { ingredient: ing, status: 'ok', quantity: null, grams: null, basisAmount: null, cells: {}, approx: [] }
-    if (ing.nutritionExcluded) return { ...base, status: 'excluded' }
-    if (!ing.name.trim()) return { ...base, status: 'excluded' }
+    const match = auto?.get(ing.id) ?? null
+    const link = ing.nutrition ?? match?.link ?? null
+    const base: IngredientRow = { ingredient: ing, status: 'ok', quantity: null, grams: null, basisAmount: null, cells: {}, approx: [], link, match, quality: 'missing' }
+    if (ing.nutritionExcluded) return { ...base, status: 'excluded', quality: 'ignored' }
+    if (!ing.name.trim()) return { ...base, status: 'excluded', quality: 'ignored' }
     const q = scaledQuantity(ing, scale)
-    if (ing.toTaste && q == null) return { ...base, status: 'toTaste' }
-    if (!ing.nutrition) return { ...base, quantity: q, status: 'unlinked', message: 'Aliment non associé' }
+    if (ing.toTaste && q == null) return { ...base, status: 'toTaste', quality: 'ignored' }
+    if (!link) {
+      if (match?.confidence === 'ambiguous') return { ...base, quantity: q, status: 'toConfirm', message: 'Plusieurs aliments possibles : à confirmer' }
+      return { ...base, quantity: q, status: 'unlinked', message: auto ? 'Ingrédient non reconnu' : 'Aliment non associé' }
+    }
+    if (q == null && match?.seasoning) return { ...base, status: 'toTaste', quality: 'ignored', message: 'Assaisonnement sans quantité : apport négligeable' }
     if (q == null) return { ...base, status: 'noQuantity', message: 'Quantité non chiffrée' }
-    const amount = toBasisAmount(q, ing.unit, ing.nutrition)
-    if ('error' in amount) return { ...base, quantity: q, status: 'noConversion', message: amount.error }
+    const amount = toBasisAmount(q, ing.unit, link, match?.usual)
+    // Herbes, épices… dont le poids ou les teneurs sont inconnus : non comptées, signalées (total estimatif).
+    const negligible = { ...base, quantity: q, status: 'negligible' as const, quality: 'ignored' as const, message: 'Assaisonnement : apport négligeable, non compté' }
+    if ('error' in amount) return match?.seasoning ? negligible : { ...base, quantity: q, status: 'noConversion', message: amount.error }
+    if (match?.seasoning && MAIN_NUTRIENTS.every((k) => effectiveValue(link, k).kind === 'missing')) return negligible
     const cells: IngredientRow['cells'] = {}
     const approx = [...amount.approx]
+    if (!ing.nutrition && match?.note && match.confidence !== 'sure') approx.unshift(match.note)
+    const weightOrMatchApprox = approx.length > 0
     for (const key of NUTRIENT_KEYS) {
-      const v = effectiveValue(ing.nutrition, key)
+      const v = effectiveValue(link, key)
       if (v.kind === 'missing') cells[key] = { value: null, kind: 'missing' }
       else {
         cells[key] = { value: (v.value * amount.basisAmount) / 100, kind: v.kind, ...(v.kind === 'below' ? { max: (v.max * amount.basisAmount) / 100 } : {}) }
@@ -178,7 +225,14 @@ export function computeNutrition(ingredients: readonly Ingredient[], scale: Scal
         }
       }
     }
-    return { ...base, quantity: q, grams: amount.grams, basisAmount: amount.basisAmount, cells, approx: [...new Set(approx)] }
+    const quality: RowQuality = MAIN_NUTRIENTS.some((k) => cells[k]?.value == null)
+      ? 'missing'
+      : !ing.nutrition && match?.confidence === 'approx'
+        ? 'uncertain'
+        : weightOrMatchApprox
+          ? 'estimated'
+          : 'verified'
+    return { ...base, quantity: q, grams: amount.grams, basisAmount: amount.basisAmount, cells, approx: [...new Set(approx)], quality }
   })
 
   const totals = {} as Record<NutrientKey, NutrientTotal>
@@ -197,16 +251,17 @@ export function computeNutrition(ingredients: readonly Ingredient[], scale: Scal
     totals[key] = t
   }
 
-  const counted = rows.filter((r) => r.status !== 'excluded' && r.status !== 'toTaste')
+  const counted = rows.filter((r) => r.status !== 'excluded' && r.status !== 'toTaste' && r.status !== 'negligible')
   const blocking = counted.filter((r) => r.status !== 'ok')
   const ok = counted.filter((r) => r.status === 'ok')
+  const negligible = rows.filter((r) => r.status === 'negligible').map((r) => `${r.ingredient.name} : apport négligeable, non compté`)
   return {
     rows,
     totals,
     rawGrams: ok.reduce((s, r) => s + (r.grams ?? 0), 0),
     rawGramsComplete: blocking.length === 0,
     blocking,
-    approximations: [...new Set(ok.flatMap((r) => r.approx))],
+    approximations: [...new Set([...ok.flatMap((r) => r.approx), ...negligible])],
     coverage: { done: ok.length, expected: counted.length },
   }
 }
@@ -340,5 +395,5 @@ export function formatNutrient(key: NutrientKey, v: number | null): string {
 }
 
 /** Poids total d'origine (sans ajustement), pour vérifier la pesée après cuisson. */
-export const rawOriginalGrams = (ingredients: readonly Ingredient[]) => computeNutrition(ingredients, IDENTITY_SCALE).rawGrams
+export const rawOriginalGrams = (ingredients: readonly Ingredient[], auto?: AutoMap | null) => computeNutrition(ingredients, IDENTITY_SCALE, auto).rawGrams
 

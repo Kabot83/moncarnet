@@ -22,11 +22,11 @@ test('pancakes protéinés : 3 modes, fiabilité, suivi de l’ajustement', asyn
   await page.getByRole('radio', { name: 'Total' }).click()
   // 601,4 kcal ; P 64,9 ; G 48,6 ; L 16,0 (CIQUAL 2025 + Open Food Facts)
   await expect.poll(() => values(page)).toEqual(['601', '65', '49', '16'])
-  await expect(page.getByRole('button', { name: /Calcul complet/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Calcul vérifié/ })).toBeVisible()
   await page.getByRole('radio', { name: 'Portion' }).click()
   await expect.poll(() => values(page)).toEqual(['301', '32', '24', '8'])
   await page.getByRole('radio', { name: '100 g' }).click()
-  await expect(page.getByRole('button', { name: /Calcul estimatif/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Estimation/ })).toBeVisible()
   await expect(page.getByText(/base 427 g d’ingrédients/)).toBeVisible()
   // 3 œufs au lieu de 2 : tout suit (levure fixe).
   await page.getByRole('radio', { name: 'Total' }).click()
@@ -44,7 +44,7 @@ test('poids après cuisson : base des valeurs pour 100 g', async ({ page }) => {
   await page.getByRole('dialog').getByRole('button', { name: 'Enregistrer' }).click()
   await expect(page.getByText('Pour 100 g de préparation cuite · 380 g')).toBeVisible()
   await expect.poll(async () => (await values(page))[0]).toBe('158') // 601,4 / 3,8
-  await expect(page.getByRole('button', { name: /Calcul complet/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Calcul vérifié/ })).toBeVisible()
   await page.reload()
   await page.getByRole('heading', { name: 'Nutrition' }).scrollIntoViewIfNeeded()
   await expect(page.getByRole('button', { name: /Cuit : 380 g/ })).toBeVisible()
@@ -60,29 +60,55 @@ test('détail par ingrédient avec sources', async ({ page }) => {
   await expect(dialog.getByText(/Anses\. 2025\. Table de composition nutritionnelle des aliments Ciqual/)).toBeVisible()
 })
 
-test('associer des ingrédients CIQUAL, poids d’une pièce obligatoire, données incomplètes signalées', async ({ page }) => {
+test('calcul automatique sans association, correction en un geste', async ({ page }) => {
   await openRecipe(page, 'Cottage pie')
-  await page.getByRole('button', { name: 'Associer les ingrédients' }).click()
-  await page.getByRole('dialog').getByRole('button', { name: /bœuf haché 15 %/ }).click()
-  const link = page.getByRole('dialog', { name: 'bœuf haché 15 %' })
-  await link.getByLabel('Rechercher dans CIQUAL').fill('boeuf haché 15%')
-  await link.getByRole('button', { name: /Boeuf, steak haché 15% MG cru/ }).click()
-  await link.getByRole('button', { name: /Associer à/ }).click()
-  await expect(page.getByText('Valeurs nutritionnelles associées')).toBeVisible()
-
-  // Un oignon (pièce) : impossible de valider sans poids.
-  await page.getByRole('dialog').getByRole('button', { name: /^oignon/ }).click()
-  const onion = page.getByRole('dialog', { name: 'oignon' })
-  await onion.getByLabel('Rechercher dans CIQUAL').fill('oignon cru')
-  await onion.getByRole('button', { name: /^Oignon, cru/ }).first().click()
-  await expect(onion.getByRole('button', { name: /Associer à/ })).toBeDisabled()
-  await onion.getByLabel(/Poids d’une pièce/).fill('110')
-  await onion.getByRole('button', { name: /Associer à/ }).click()
-
-  await page.keyboard.press('Escape')
-  await expect(page.getByRole('button', { name: /Données incomplètes · 2\/\d+ ingrédients/ })).toBeVisible()
+  // Tout est reconnu sauf la sauce Worcestershire : le total est un minimum, signalé.
+  await expect(page.getByRole('button', { name: /Partiel · 11\/12 ingrédients/ })).toBeVisible()
   await page.getByRole('radio', { name: 'Total' }).click()
   await expect(panel(page).locator('dd').first()).toContainText('≥')
+
+  await page.getByRole('button', { name: 'Fiabilité par ingrédient' }).click()
+  const detail = page.getByRole('dialog', { name: 'Détail par ingrédient' })
+  await expect(detail.getByText(/Poids usuel estimé : 1 oignon ≈ 110 g/)).toBeVisible()
+  await detail.getByRole('button', { name: /^oignon/ }).click()
+  const onion = page.getByRole('dialog', { name: 'oignon' })
+  await expect(onion.getByRole('heading', { name: 'Oignon, cru' })).toBeVisible()
+  await expect(onion.getByText('Reconnu automatiquement')).toBeVisible()
+  await onion.getByLabel(/Poids d’une pièce/).fill('150')
+  await onion.getByRole('button', { name: 'Valider' }).click()
+  await expect(page.getByText('Enregistré, et retenu pour vos prochaines recettes')).toBeVisible()
+  await expect(detail.getByText('CIQUAL · Oignon, cru (votre choix)')).toBeVisible()
+
+  // Ingrédient inconnu : on choisit de ne pas le compter, le calcul n'est plus partiel.
+  await detail.getByRole('button', { name: /^sauce Worcestershire/ }).click()
+  const sauce = page.getByRole('dialog', { name: 'sauce Worcestershire' })
+  await sauce.getByRole('switch', { name: /Ne pas compter cet ingrédient/ }).click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: /Estimation · 11\/11 ingrédients/ })).toBeVisible()
+  await expect(panel(page).locator('dd').first()).not.toContainText('≥')
+})
+
+test('aperçu nutritionnel en direct pendant la saisie', async ({ page }) => {
+  await page.goto('./#/recettes/nouvelle')
+  await page.getByLabel('Nom de la recette *').fill('Galettes test')
+  const add = page.getByRole('button', { name: 'Ajouter un ingrédient' })
+  const lines: Array<[string, string, string]> = [
+    ['1', '', 'oignon'],
+    ['2', '', 'œufs'],
+    ['150', 'g', 'farine'],
+    ['1', 'c. à soupe', 'huile d’olive'],
+  ]
+  for (const [i, [q, u, n]] of lines.entries()) {
+    if (i > 0) await add.click()
+    await page.getByLabel(`Quantité de l’ingrédient ${i + 1}`).fill(q)
+    if (u) await page.getByLabel('Unité').nth(i).fill(u)
+    await page.getByLabel('Nom de l’ingrédient').nth(i).fill(n)
+  }
+  const live = page.getByLabel('Aperçu nutritionnel')
+  // 110 g d'oignon + 100 g d'œufs + 150 g de farine + 13,65 g d'huile : 831 kcal (CIQUAL 2025).
+  await expect(live).toContainText('Recette entière : 831 kcal')
+  await expect(live).toContainText('Par portion (4) : 208 kcal')
+  await expect(live).toContainText('Estimation · 4/4 ingrédients calculés automatiquement')
 })
 
 test('produit de marque Open Food Facts (réseau simulé) et mémoire « Mes aliments »', async ({ page }) => {
@@ -97,19 +123,22 @@ test('produit de marque Open Food Facts (réseau simulé) et mémoire « Mes ali
     })
   })
   await openRecipe(page, 'Gâteau au chocolat fondant')
-  await page.getByRole('button', { name: 'Associer les ingrédients' }).click()
+  await page.getByRole('button', { name: 'Détail par ingrédient' }).click()
   await page.getByRole('dialog').getByRole('button', { name: /^sucre/ }).click()
   const sheet = page.getByRole('dialog', { name: 'sucre' })
+  await expect(sheet.getByRole('heading', { name: 'Sucre blanc' })).toBeVisible()
+  await sheet.getByRole('button', { name: /Recherche avancée/ }).click()
   await sheet.getByRole('radio', { name: 'Marques' }).click()
   await sheet.getByLabel('Rechercher dans Open Food Facts').fill('skyr yoplait')
   await sheet.getByRole('button', { name: 'Chercher' }).click()
   await sheet.getByRole('button', { name: /Skyr nature 0%/ }).click()
   await expect(sheet.getByText(/code-barres 3329770077003/)).toBeVisible()
   await sheet.getByRole('button', { name: 'Ajouter aux favoris' }).click()
-  await sheet.getByRole('button', { name: /Associer à/ }).click()
+  await sheet.getByRole('button', { name: 'Valider' }).click()
   // L'aliment est retrouvé sans nouvelle recherche.
   await page.getByRole('dialog').getByRole('button', { name: /^farine/ }).click()
   const flour = page.getByRole('dialog', { name: 'farine' })
+  await flour.getByRole('button', { name: /Recherche avancée/ }).click()
   await flour.getByRole('radio', { name: 'Mes aliments' }).click()
   await expect(flour.getByText('Skyr nature 0%')).toHaveCount(2) // favoris + récents
 })
@@ -120,9 +149,12 @@ test('hors ligne : calcul et recherche CIQUAL sans réseau', async ({ page, cont
   await context.setOffline(true)
   await page.reload()
   await openRecipe(page, 'Cottage pie')
-  await page.getByRole('button', { name: 'Associer les ingrédients' }).click()
+  await expect(page.getByRole('button', { name: /Partiel · 11\/12 ingrédients/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Détail par ingrédient' }).click()
   await page.getByRole('dialog').getByRole('button', { name: /^carottes/ }).click()
   const sheet = page.getByRole('dialog', { name: 'carottes' })
+  await expect(sheet.getByRole('heading', { name: 'Carotte, crue' })).toBeVisible()
+  await sheet.getByRole('button', { name: /Recherche avancée/ }).click()
   await sheet.getByLabel('Rechercher dans CIQUAL').fill('carotte crue')
   await expect(sheet.getByRole('button', { name: /^Carotte, crue/ }).first()).toBeVisible()
   await sheet.getByRole('radio', { name: 'Marques' }).click()

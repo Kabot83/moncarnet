@@ -45,7 +45,7 @@ export function loadCiqual(): Promise<CiqualFood[]> {
   return catalog
 }
 
-const COOKED = /\b(cuit|cuite|bouilli|grille|frit|roti|poele|vapeur|braise|au four)\b/
+export const COOKED = /\b(cuit|cuite|bouilli|grille|frit|roti|poele|vapeur|braise|au four)\b/
 const singular = (w: string) => (w.length > 3 ? w.replace(/(s|x)$/, '') : w)
 
 /** Score de pertinence (0 = ne correspond pas). Tous les mots de la requête doivent être présents. */

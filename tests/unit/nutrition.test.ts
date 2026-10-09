@@ -163,14 +163,22 @@ describe('conversions d’unités', () => {
 
   it('densité inconnue : approximation signalée', () => {
     const r = toBasisAmount(100, 'ml', food('100g'))
-    expect(r).toMatchObject({ basisAmount: 100, approx: ['Masse volumique non renseignée : 1 ml compté pour 1 g'] })
+    expect(r).toMatchObject({ basisAmount: 100, approx: ['Masse volumique inconnue : 1 ml compté pour 1 g'] })
   })
 
-  it('aucun poids inventé pour les pièces, pincées et tasses', () => {
-    expect(toBasisAmount(2, '', food('100g'))).toEqual({ error: 'Poids d’une pièce à renseigner' })
-    expect(toBasisAmount(1, 'pincée', food('100g'))).toEqual({ error: 'Poids d’une pincée à renseigner' })
-    expect(toBasisAmount(1, 'tasse', food('100g'))).toMatchObject({ error: expect.stringContaining('tasse') })
+  it('sans poids usuel connu : pas de poids inventé ; tasse = 240 ml signalée', () => {
+    expect(toBasisAmount(2, '', food('100g'))).toEqual({ error: 'Poids usuel inconnu : poids d’une pièce à préciser' })
+    expect(toBasisAmount(1, 'pincée', food('100g'))).toEqual({ error: 'Poids d’une pincée à préciser' })
+    expect(toBasisAmount(1, 'tasse', food('100g'))).toMatchObject({ basisAmount: 240, approx: expect.arrayContaining(['1 tasse comptée 240 ml']) })
     expect(toBasisAmount(3, '', { ...food('100g'), gramsPerUnit: 55 })).toEqual({ basisAmount: 165, grams: 165, approx: [] })
+  })
+
+  it('poids usuel : utilisé seulement sans valeur saisie, et toujours signalé', () => {
+    const usual = { gramsPerUnit: { grams: 110, note: 'Poids usuel estimé : 1 oignon ≈ 110 g', user: false } }
+    expect(toBasisAmount(2, '', food('100g'), usual)).toEqual({ basisAmount: 220, grams: 220, approx: ['Poids usuel estimé : 1 oignon ≈ 110 g'] })
+    expect(toBasisAmount(2, '', { ...food('100g'), gramsPerUnit: 150 }, usual)).toEqual({ basisAmount: 300, grams: 300, approx: [] })
+    const spoon = toBasisAmount(1, 'c. à soupe', food('100g'), { density: { value: 0.91, note: 'x', user: false } })
+    expect(spoon).toMatchObject({ basisAmount: 13.65, approx: ['Poids usuel estimé : 1 c. à soupe ≈ 13,7 g'] })
   })
 
   it('kcal ↔ kJ', () => {

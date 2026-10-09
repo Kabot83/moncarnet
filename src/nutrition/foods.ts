@@ -22,8 +22,11 @@ export function nameKey(name: string): string {
     .join(' ')
 }
 
-/** Enregistre l'usage d'un aliment (récents) et l'association pour ce nom d'ingrédient. */
-export async function rememberFood(food: Food, ingredientName: string, link: Pick<FoodLink, 'gramsPerUnit' | 'density'>) {
+/**
+ * Enregistre l'usage d'un aliment (récents) et, si `remember`, la préférence pour ce nom
+ * d'ingrédient : elle sera appliquée automatiquement aux prochaines recettes.
+ */
+export async function rememberFood(food: Food, ingredientName: string, link: Pick<FoodLink, 'gramsPerUnit' | 'density'>, remember = true) {
   const key = foodKey(food)
   const now = Date.now()
   await db.transaction('rw', db.foods, db.foodMemory, async () => {
@@ -37,7 +40,7 @@ export async function rememberFood(food: Food, ingredientName: string, link: Pic
       updatedAt: now,
     })
     const nk = nameKey(ingredientName)
-    if (nk) await db.foodMemory.put({ nameKey: nk, foodKey: key, gramsPerUnit: link.gramsPerUnit, density: link.density, updatedAt: now })
+    if (nk && remember) await db.foodMemory.put({ nameKey: nk, foodKey: key, gramsPerUnit: link.gramsPerUnit, density: link.density, updatedAt: now })
   })
 }
 
@@ -87,10 +90,10 @@ export async function setIngredientNutrition(recipeId: string, ingredientId: str
 }
 
 /** Enregistre le poids après cuisson, avec le poids des ingrédients au moment de la pesée. */
-export async function setCookedWeight(recipe: Recipe, grams: number | null) {
+export async function setCookedWeight(recipe: Recipe, grams: number | null, rawOriginal: number = rawOriginalGrams(recipe.ingredients)) {
   await db.recipes.update(recipe.id, {
     cookedWeightG: grams && grams > 0 ? grams : null,
-    cookedWeightRawG: grams && grams > 0 ? rawOriginalGrams(recipe.ingredients) || null : null,
+    cookedWeightRawG: grams && grams > 0 ? rawOriginal || null : null,
     updatedAt: Date.now(),
   })
 }

@@ -12,7 +12,7 @@ Carnet de recettes personnel pour Android (PWA installable), hors ligne, sans co
 - **Collections** personnalisables (couverture, ordre), **liste de courses** multi-recettes (portions, ajustements en cours, regroupement, addition des unités compatibles seulement, rayons, partage texte).
 - **Import** : saisie manuelle avec brouillon automatique, lien (Schema.org/Recipe, via le proxy), photo et texte (Chef IA). Toujours un aperçu éditable avant enregistrement.
 - **Mon Chef IA** : conversation libre, idées de recettes, « Surprends-moi », amélioration d'une recette (sans jamais modifier l'original), remplacement d'ingrédient, exploitation du carnet (sélection locale, jamais tout le catalogue), profil culinaire, estimation nutritionnelle signalée comme telle.
-- **Nutrition** : calories, protéines, glucides et lipides calculés ingrédient par ingrédient depuis la table **CIQUAL 2025** de l'ANSES (hors ligne) et **Open Food Facts** (produits de marque, code-barres) ; pour 100 g, par portion ou au total ; poids après cuisson ; indicateur de fiabilité ; suit les quantités ajustées. Voir [docs/NUTRITION.md](docs/NUTRITION.md).
+- **Nutrition automatique** : saisissez la recette normalement, les macros se calculent toutes seules (reconnaissance des ingrédients courants, poids usuels signalés comme estimations, correction en un geste mémorisée pour les prochaines recettes) ; calories, protéines, glucides et lipides calculés ingrédient par ingrédient depuis la table **CIQUAL 2025** de l'ANSES (hors ligne) et **Open Food Facts** (produits de marque, code-barres) ; pour 100 g, par portion ou au total ; poids après cuisson ; indicateur de fiabilité ; suit les quantités ajustées. Voir [docs/NUTRITION.md](docs/NUTRITION.md).
 - **Sauvegarde ZIP** (JSON versionné + photos, sans aucun secret) et **restauration** contrôlée (format, version, SHA-256 des photos, doublons, aperçu, fusion ou remplacement).
 - Mode clair/sombre, interface 100 % française, pensée pour une main.
 
@@ -34,13 +34,13 @@ Ouvrir http://localhost:5173. Six recettes de démonstration (dont les crêpes d
 npm test
 ```
 
-131 tests unitaires (Vitest) : nutrition (données CIQUAL et Open Food Facts réelles), clavier, migration PWA → APK, calcul des proportions, unités et fractions, services de données, journal, collections, sessions, recherche sur 800 recettes, liste de courses, sauvegarde/restauration de 300 recettes et 150 photos (dont fichiers corrompus), import Schema.org, validation des réponses IA, quotas, proxy (authentification, routes, SSRF, robots.txt).
+164 tests unitaires (Vitest) : nutrition (données CIQUAL et Open Food Facts réelles, reconnaissance automatique et poids usuels), clavier, migration PWA → APK, calcul des proportions, unités et fractions, services de données, journal, collections, sessions, recherche sur 800 recettes, liste de courses, sauvegarde/restauration de 300 recettes et 150 photos (dont fichiers corrompus), import Schema.org, validation des réponses IA, quotas, proxy (authentification, routes, SSRF, robots.txt).
 
 ```bash
 npm run build && npm run test:e2e
 ```
 
-30 scénarios Playwright (dont 6 avec clavier ouvert/fermé et 5 pour la nutrition) sur le build de production, format Pixel 7, avec le Chrome installé : navigation, crêpes 3 → 4 œufs, création/recherche/suppression, mode cuisine et bouton Retour, journal, courses, collections, export/restauration ZIP, **fonctionnement hors ligne**, et Chef IA avec l'API Gemini **simulée** (génération, « enregistre-la », erreur 429 sans nouvelle tentative, réponse invalide écartée, limite locale, import texte).
+32 scénarios Playwright (dont 6 avec clavier ouvert/fermé et 7 pour la nutrition) sur le build de production, format Pixel 7, avec le Chrome installé : navigation, crêpes 3 → 4 œufs, création/recherche/suppression, mode cuisine et bouton Retour, journal, courses, collections, export/restauration ZIP, **fonctionnement hors ligne**, et Chef IA avec l'API Gemini **simulée** (génération, « enregistre-la », erreur 429 sans nouvelle tentative, réponse invalide écartée, limite locale, import texte).
 
 ## Mettre en ligne et installer sur Android
 

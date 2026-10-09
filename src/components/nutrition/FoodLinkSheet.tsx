@@ -1,16 +1,20 @@
 /**
- * Associer un ingrédient à un aliment nutritionnel (CIQUAL, Open Food Facts ou saisie
- * personnelle). Aucune association n'est faite sans validation explicite.
+ * Corriger la référence nutritionnelle d'un ingrédient. S'ouvre sur la correspondance
+ * automatique (ou le choix déjà fait) : autres aliments proposés en un geste, poids usuel
+ * pré-rempli, option « retenir pour mes prochaines recettes ». Recherche avancée : CIQUAL,
+ * Open Food Facts, saisie personnelle.
  */
 import { ArrowLeft, Barcode, Check, History, Search, Star, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useOnline } from '@/hooks/useOnline'
 import { formatNumber, normalizeUnit } from '@/lib/units'
 import { type Food, type FoodLink, FoodLinkSchema, type Ingredient, MAIN_NUTRIENTS, type NutrientKey, type NutrientValue, type Per100 } from '@/models/types'
 import { CIQUAL_CITATION, type CiqualFood, ciqualToFood, loadCiqual, searchCiqual } from '@/nutrition/ciqual'
+import { type AutoMatch, effectiveUnit, searchQuery } from '@/nutrition/auto'
 import { LABELS, SPOON_ML, UNITS, effectiveValue, formatNutrient, toBasisAmount } from '@/nutrition/engine'
 import { customFood, foodKey, rememberFood, setIngredientNutrition, toggleFoodFavorite, useFoodEntry, useFoodSuggestions } from '@/nutrition/foods'
 import { OFF_ATTRIBUTION, OffError, confirmOffProduct, isComplete, searchOff } from '@/nutrition/off'
+import { useAutoMatches } from '@/nutrition/useAutoNutrition'
 import { Button, IconButton } from '../ui/Button'
 import { useToast } from '../ui/Feedback'
 import { NumberInput, Segmented, Switch, TextInput } from '../ui/Fields'
@@ -73,23 +77,38 @@ export function FoodLinkSheet({ open, onClose, recipeId, ingredient }: { open: b
   const [offError, setOffError] = useState<string | null>(null)
   const [draft, setDraft] = useState<FoodLink | null>(null)
   const [confirming, setConfirming] = useState(false)
+  const [remember, setRemember] = useState(true)
   const suggestions = useFoodSuggestions(ingredient?.name ?? '')
+  const single = useMemo(() => (ingredient ? [ingredient] : []), [ingredient])
+  const match = useAutoMatches(single)?.get(ingredient?.id ?? '') ?? null
+  const autoShown = useRef(false)
 
-  // Ouverture : on repart de l'association existante, sinon de la recherche.
+  // Ouverture : on repart du choix existant, sinon de la correspondance automatique, sinon de la recherche.
   useEffect(() => {
     if (!open || !ingredient) return
     setQuery(searchText(ingredient.name))
     setOffResults(null)
     setOffError(null)
+    setRemember(true)
+    autoShown.current = false
     if (ingredient.nutrition) {
       setDraft(ingredient.nutrition)
       setStep('confirm')
+      autoShown.current = true
     } else {
       setDraft(null)
       setStep('search')
       setTab('ciqual')
     }
   }, [open, ingredient?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // La table se charge en quelques millisecondes : on affiche alors l'aliment reconnu.
+  useEffect(() => {
+    if (!open || autoShown.current || !match?.link) return
+    autoShown.current = true
+    setDraft({ ...match.link, gramsPerUnit: match.origin === 'memory' ? (match.usual.gramsPerUnit?.grams ?? null) : null, density: match.origin === 'memory' ? (match.usual.density?.value ?? null) : null, linkedAt: Date.now() })
+    setStep('confirm')
+  }, [open, match]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (open && suggestions.remembered && !ingredient?.nutrition && tab === 'ciqual' && step === 'search') setTab('mine')
@@ -149,9 +168,9 @@ export function FoodLinkSheet({ open, onClose, recipeId, ingredient }: { open: b
 
   const save = async (link: FoodLink | null) => {
     if (!ingredient) return
-    await setIngredientNutrition(recipeId, ingredient.id, { nutrition: link, nutritionExcluded: false })
-    if (link) await rememberFood(link.food, ingredient.name, link)
-    toast.success(link ? 'Valeurs nutritionnelles associées' : 'Association retirée')
+    await setIngredientNutrition(recipeId, ingredient.id, { nutrition: link ? { ...link, linkedAt: Date.now() } : null, nutritionExcluded: false })
+    if (link) await rememberFood(link.food, ingredient.name, link, remember)
+    toast.success(link ? (remember ? 'Enregistré, et retenu pour vos prochaines recettes' : 'Enregistré pour cette recette') : 'Retour à la reconnaissance automatique')
     onClose()
   }
 
@@ -302,9 +321,9 @@ export function FoodLinkSheet({ open, onClose, recipeId, ingredient }: { open: b
               />
             </div>
           )}
-          {ingredient.nutrition && (
-            <Button variant="ghost" icon={<ArrowLeft size={16} />} onClick={() => (setDraft(ingredient.nutrition), setStep('confirm'))}>
-              Revenir à l’aliment associé
+          {(ingredient.nutrition || match?.link) && (
+            <Button variant="ghost" icon={<ArrowLeft size={16} />} onClick={() => (setDraft(ingredient.nutrition ?? { ...match!.link!, linkedAt: Date.now() }), setStep('confirm'))}>
+              Revenir à l’aliment {ingredient.nutrition ? 'choisi' : 'reconnu'}
             </Button>
           )}
         </div>
@@ -313,10 +332,14 @@ export function FoodLinkSheet({ open, onClose, recipeId, ingredient }: { open: b
           <ConfirmLink
             ingredient={ingredient}
             link={draft}
+            match={match}
+            remember={remember}
+            onRemember={setRemember}
             onChange={setDraft}
             onChangeFood={() => setStep('search')}
             onSave={() => void save(draft)}
             onRemove={ingredient.nutrition ? () => void save(null) : undefined}
+            onExclude={() => void exclude(true)}
           />
         )
       )}
@@ -324,30 +347,65 @@ export function FoodLinkSheet({ open, onClose, recipeId, ingredient }: { open: b
   )
 }
 
+const ORIGIN_LABEL: Record<string, string> = {
+  memory: 'Votre choix habituel',
+  dictionary: 'Reconnu automatiquement',
+  search: 'Correspondance approchée — à vérifier',
+}
+
 function ConfirmLink({
   ingredient,
   link,
+  match,
+  remember,
+  onRemember,
   onChange,
   onChangeFood,
   onSave,
   onRemove,
+  onExclude,
 }: {
   ingredient: Ingredient
   link: FoodLink
+  match: AutoMatch | null
+  remember: boolean
+  onRemember: (v: boolean) => void
   onChange: (l: FoodLink) => void
   onChangeFood: () => void
   onSave: () => void
   onRemove?: () => void
+  onExclude: () => void
 }) {
   const entry = useFoodEntry(link.food)
   const [showCorrections, setShowCorrections] = useState(Object.keys(link.overrides).length > 0)
+  const [alternatives, setAlternatives] = useState<Food[]>([])
   const unit = normalizeUnit(ingredient.unit)
-  const needsPieceWeight = !(unit.kind === 'mass' || unit.kind === 'volume' || (unit.kind === 'spoon' && SPOON_ML[unit.canonical] != null))
-  const usesVolume = unit.kind === 'volume' || unit.kind === 'spoon'
-  const needsDensity = (usesVolume && link.food.basis === '100g') || (unit.kind === 'mass' && link.food.basis === '100ml')
-  const amount = ingredient.quantity != null ? toBasisAmount(ingredient.quantity, ingredient.unit, link) : null
+  const spoonMl = unit.kind === 'spoon' ? SPOON_ML[unit.canonical] : undefined
+  const perPiece = !(unit.kind === 'mass' || unit.kind === 'volume' || spoonMl != null)
+  const needsDensity = (unit.kind === 'volume' && link.food.basis === '100g') || (unit.kind === 'mass' && link.food.basis === '100ml')
+  const usual = match?.usual ?? {}
+  const amount = ingredient.quantity != null ? toBasisAmount(ingredient.quantity, ingredient.unit, link, usual) : null
   const per = link.food.basis === '100ml' ? '100 ml' : '100 g'
-  const canSave = !needsPieceWeight || !!link.gramsPerUnit || ingredient.quantity == null
+  const auto = !ingredient.nutrition && match?.link?.food.id === link.food.id && match.link.food.source === link.food.source
+  const eu = effectiveUnit(ingredient)
+  const pieceLabel = unit.kind === 'pinch' ? 'Poids d’une pincée' : eu.unitLabel ? `Poids d’1 ${eu.unitLabel}` : 'Poids d’une pièce'
+
+  // Autres aliments proches, en un geste (table CIQUAL locale).
+  useEffect(() => {
+    let alive = true
+    const q = searchQuery(eu.name)
+    if (!q) return
+    void searchCiqual(q, 8).then((r) => {
+      if (!alive) return
+      const fromMatch = match?.candidates ?? []
+      const all = [...fromMatch, ...r.map(ciqualToFood)]
+      const seen = new Set([foodKey(link.food)])
+      setAlternatives(all.filter((f) => !seen.has(foodKey(f)) && seen.add(foodKey(f))).slice(0, 5))
+    })
+    return () => {
+      alive = false
+    }
+  }, [eu.name, link.food.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const contribution = useMemo(() => {
     if (!amount || 'error' in amount) return null
@@ -362,7 +420,10 @@ function ConfirmLink({
       <div className="rounded-2xl bg-paper p-4 shadow-[var(--shadow-card)]">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold tracking-wider text-terra uppercase">{SOURCE_LABEL[link.food.source]}</p>
+            <p className="text-[11px] font-semibold tracking-wider text-terra uppercase">
+              {SOURCE_LABEL[link.food.source]}
+              {auto && match ? <span className="ml-1 font-medium tracking-normal normal-case text-muted">· {match.confidence === 'assumed' ? 'Variante courante supposée' : (ORIGIN_LABEL[match.origin] ?? '')}</span> : null}
+            </p>
             <h3 className="font-serif text-lg leading-snug font-semibold">{link.food.name}</h3>
             <p className="text-xs text-muted">
               {[link.food.brand, link.food.source === 'ciqual' ? `code ${link.food.id}` : link.food.source === 'off' ? `code-barres ${link.food.id}` : '', link.food.version].filter(Boolean).join(' · ')}
@@ -390,24 +451,55 @@ function ConfirmLink({
         ))}
       </div>
 
-      {needsPieceWeight && ingredient.quantity != null && (
-        <div>
-          <NumberInput
-            label={`Poids d’${unit.kind === 'pinch' ? 'une pincée' : unit.canonical ? `un(e) ${unit.canonical}` : 'une pièce'} (g, partie comestible)`}
-            suffix="g"
-            value={link.gramsPerUnit}
-            onChange={(v) => onChange({ ...link, gramsPerUnit: v && v > 0 ? v : null })}
-            hint="Indispensable pour calculer : pesez une pièce ou reportez le poids de l’emballage. Mon Carnet n’invente aucun poids."
-          />
-        </div>
+      {alternatives.length > 0 && (
+        <section aria-label="Autres aliments">
+          <h3 className="label">Ce n’est pas le bon ? Autres aliments</h3>
+          <ul className="flex flex-wrap gap-2">
+            {alternatives.map((f) => (
+              <li key={foodKey(f)}>
+                <button type="button" onClick={() => onChange({ ...link, food: f, overrides: {} })} className="rounded-full bg-sunken px-3 py-1.5 text-left text-[13px] leading-snug active:scale-[.98]">
+                  {f.name}
+                  <span className="ml-1 text-faint tabular-nums">{formatValue('kcal', f.per100.kcal)} kcal</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {perPiece && ingredient.quantity != null && (
+        <NumberInput
+          label={`${pieceLabel} (g) — facultatif`}
+          suffix="g"
+          value={link.gramsPerUnit}
+          placeholder={usual.gramsPerUnit ? formatNumber(usual.gramsPerUnit.grams, 1) : undefined}
+          onChange={(v) => onChange({ ...link, gramsPerUnit: v && v > 0 ? v : null })}
+          hint={
+            usual.gramsPerUnit
+              ? `Sans saisie : poids usuel estimé ≈ ${formatNumber(usual.gramsPerUnit.grams, 1)} g. Pesez seulement si vous voulez plus de précision.`
+              : 'Poids usuel inconnu pour cet ingrédient : sans poids, il n’est pas compté (le total est alors indiqué comme partiel).'
+          }
+        />
+      )}
+      {spoonMl != null && link.food.basis === '100g' && (
+        <NumberInput
+          label={`Poids d’1 ${unit.canonical} (g) — facultatif`}
+          suffix="g"
+          step={0.1}
+          value={link.density ? Math.round(link.density * spoonMl * 10) / 10 : null}
+          placeholder={usual.density ? formatNumber(usual.density.value * spoonMl, 1) : formatNumber(spoonMl, 0)}
+          onChange={(v) => onChange({ ...link, density: v && v > 0 ? v / spoonMl : null })}
+          hint={usual.density ? `Sans saisie : valeur usuelle ≈ ${formatNumber(usual.density.value * spoonMl, 1)} g.` : `Sans saisie : ${spoonMl} ml comptés ${spoonMl} g (estimation).`}
+        />
       )}
       {needsDensity && (
         <NumberInput
           label="Masse volumique (g/ml) — facultatif"
           step={0.01}
           value={link.density}
+          placeholder={usual.density ? formatNumber(usual.density.value, 2) : undefined}
           onChange={(v) => onChange({ ...link, density: v && v > 0 ? v : null })}
-          hint="Sans valeur, 1 ml est compté pour 1 g et le résultat est marqué « estimatif ». Exemples courants : huile ≈ 0,92 ; lait ≈ 1,03 ; miel ≈ 1,4."
+          hint={usual.density ? `Sans saisie : valeur usuelle ${formatNumber(usual.density.value, 2)} g/ml.` : 'Sans valeur, 1 ml est compté pour 1 g (estimation). Exemples : huile ≈ 0,92 ; lait ≈ 1,03 ; miel ≈ 1,4.'}
         />
       )}
 
@@ -423,6 +515,7 @@ function ConfirmLink({
           {amount && !('error' in amount) && amount.approx.map((a) => <p key={a} className="mt-1 text-xs text-terra-strong">{a}</p>)}
         </div>
       )}
+      {amount && 'error' in amount && <p className="rounded-2xl bg-sunken p-3 text-sm text-muted">{amount.error}</p>}
 
       <div>
         <button type="button" className="text-sm font-semibold text-terra" onClick={() => setShowCorrections((v) => !v)} aria-expanded={showCorrections}>
@@ -450,18 +543,30 @@ function ConfirmLink({
         )}
       </div>
 
+      <Switch
+        label="Retenir pour mes prochaines recettes"
+        description={`« ${ingredient.name} » utilisera automatiquement cet aliment${perPiece || spoonMl ? ' et ce poids' : ''}.`}
+        checked={remember}
+        onChange={onRemember}
+      />
+
       <div className="space-y-2">
-        <Button block size="lg" icon={<Check size={18} />} disabled={!canSave} onClick={onSave}>
-          Associer à « {ingredient.name} »
+        <Button block size="lg" icon={<Check size={18} />} onClick={onSave}>
+          Valider
         </Button>
-        {!canSave && <p className="text-center text-xs text-danger">Renseignez le poids d’une pièce pour pouvoir calculer.</p>}
         <Button block variant="secondary" icon={<Search size={16} />} onClick={onChangeFood}>
-          Choisir un autre aliment
+          Recherche avancée (CIQUAL, marques…)
         </Button>
-        {onRemove && (
+        {onRemove ? (
           <Button block variant="ghost" className="text-danger" icon={<Trash2 size={16} />} onClick={onRemove}>
-            Retirer l’association
+            Revenir à la reconnaissance automatique
           </Button>
+        ) : (
+          !ingredient.nutritionExcluded && (
+            <Button block variant="ghost" onClick={onExclude}>
+              Ne pas compter cet ingrédient
+            </Button>
+          )
         )}
       </div>
     </div>
