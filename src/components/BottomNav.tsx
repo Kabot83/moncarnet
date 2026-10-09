@@ -26,7 +26,7 @@ export function BottomNav() {
           type="button"
           onClick={() => setAddOpen(true)}
           aria-label="Ajouter une recette"
-          className="fixed right-4 bottom-[calc(5.25rem+env(safe-area-inset-bottom))] z-30 grid size-15 place-items-center rounded-full bg-terra text-white shadow-[var(--shadow-float)] transition-transform active:scale-95 dark:text-[#1b1916]"
+          className="fixed right-4 bottom-[calc(5.25rem+var(--sab))] z-30 grid size-15 place-items-center rounded-full bg-terra text-white shadow-[var(--shadow-float)] transition-transform active:scale-95 dark:text-[#1b1916]"
           style={{ width: '3.75rem', height: '3.75rem' }}
         >
           <Plus size={28} strokeWidth={2} />

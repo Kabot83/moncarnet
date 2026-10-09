@@ -4,7 +4,9 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
 
-export default defineConfig({
+// `vite build --mode android` : variante pour l'APK Capacitor, sans service worker
+// (l'APK embarque déjà tous ses fichiers ; un service worker y créerait des conflits de cache).
+export default defineConfig(({ mode }) => ({
   // Chemins relatifs : l'app fonctionne à la racine d'un domaine, dans un sous-dossier
   // (GitHub Pages) et dans une coquille Capacitor.
   base: './',
@@ -13,6 +15,7 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      disable: mode === 'android',
       registerType: 'prompt',
       includeAssets: ['icons/*.png', 'icons/*.svg'],
       manifest: {
@@ -59,4 +62,4 @@ export default defineConfig({
     include: ['tests/unit/**/*.test.ts'],
     setupFiles: ['tests/unit/setup.ts'],
   },
-})
+}))

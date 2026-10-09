@@ -2,6 +2,7 @@ import { NOTE_FIELDS, type Recipe, type ScaleState } from '@/models/types'
 import { formatDuration } from './format'
 import { IDENTITY_SCALE, scaledQuantity, scaledServings } from './scaling'
 import { displayQuantity, formatNumber } from './units'
+import { nativeShareText } from '@/platform/native'
 
 /** Version texte d'une recette (partage, presse-papiers). */
 export function recipeToText(r: Recipe, scale: ScaleState = IDENTITY_SCALE): string {
@@ -42,6 +43,7 @@ export function recipeToText(r: Recipe, scale: ScaleState = IDENTITY_SCALE): str
 
 /** Partage natif Android, sinon copie dans le presse-papiers. */
 export async function shareText(title: string, text: string): Promise<'shared' | 'copied' | 'cancelled'> {
+  if (await nativeShareText(title, text)) return 'shared'
   if (navigator.share) {
     try {
       await navigator.share({ title, text })

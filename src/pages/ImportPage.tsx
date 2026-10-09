@@ -14,6 +14,7 @@ import { useSafeNavigate } from '@/hooks/useOverlayHistory'
 import { UrlImportError, importFromUrl, importImage } from '@/importers/url'
 import { createDraft } from '@/services/drafts'
 import { useSettings } from '@/services/settings'
+import { isNative } from '@/platform/native'
 
 type Mode = 'lien' | 'photo' | 'texte'
 
@@ -173,7 +174,7 @@ export default function ImportPage() {
                 Importer la recette
               </Button>
             </form>
-            {!settings.proxyUrl && (
+            {!settings.proxyUrl && !isNative && (
               <p className="rounded-2xl bg-sunken p-3 text-sm text-muted">
                 Sans proxy configuré, la plupart des sites bloquent la lecture depuis une application web (CORS). Vous pouvez configurer votre proxy dans{' '}
                 <Link to="/reglages/ia" className="font-semibold text-terra">
@@ -182,7 +183,7 @@ export default function ImportPage() {
                 ou utiliser le partage Android puis l’import par texte.
               </p>
             )}
-            <p className="text-xs text-faint">Astuce : depuis Chrome, « Partager » → « Mon Carnet » ouvre directement cet écran.</p>
+            {!isNative && <p className="text-xs text-faint">Astuce : depuis Chrome, « Partager » → « Mon Carnet » ouvre directement cet écran.</p>}
           </section>
         )}
 

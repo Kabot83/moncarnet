@@ -10,6 +10,7 @@ import { db } from '@/db/db'
 import { newId } from '@/lib/id'
 import { resetScale } from '@/lib/scaling'
 import type { CookingSession, ScaleState, Timer } from '@/models/types'
+import { cancelTimerNotification, isNative, scheduleTimerNotification } from '@/platform/native'
 
 export function useSession(recipeId: string | undefined): CookingSession | null | undefined {
   return useLiveQuery(async () => (recipeId ? ((await db.sessions.get(recipeId)) ?? null) : null), [recipeId])
@@ -56,7 +57,9 @@ export const resetSessionScale = (recipeId: string) => upsert(recipeId, { scale:
 /** Termine la préparation : la prochaine repartira des quantités d'origine. */
 export async function endSession(recipeId: string) {
   await db.sessions.delete(recipeId)
-  await db.timers.where('recipeId').equals(recipeId).delete()
+  const timers = await db.timers.where('recipeId').equals(recipeId).toArray()
+  await db.timers.bulkDelete(timers.map((t) => t.id))
+  timers.forEach((t) => void cancelTimerNotification(t.id))
 }
 
 // ---------------------------------------------------------------------------
@@ -70,31 +73,43 @@ export function useTimers(): Timer[] {
 export async function addTimer(label: string, minutes: number, recipeId: string | null = null): Promise<string> {
   const id = newId('t_')
   const durationMs = Math.max(1, minutes) * 60_000
-  await db.timers.put({ id, label, recipeId, durationMs, endsAt: Date.now() + durationMs, remainingMs: null, done: false, createdAt: Date.now() })
+  const endsAt = Date.now() + durationMs
+  await db.timers.put({ id, label, recipeId, durationMs, endsAt, remainingMs: null, done: false, createdAt: Date.now() })
   ensureNotificationPermission()
+  void scheduleTimerNotification(id, label, endsAt)
   return id
 }
 
 export async function pauseTimer(t: Timer) {
   if (t.endsAt == null) return
   await db.timers.update(t.id, { endsAt: null, remainingMs: Math.max(0, t.endsAt - Date.now()) })
+  void cancelTimerNotification(t.id)
 }
 
 export async function resumeTimer(t: Timer) {
   if (t.remainingMs == null) return
-  await db.timers.update(t.id, { endsAt: Date.now() + t.remainingMs, remainingMs: null })
+  const endsAt = Date.now() + t.remainingMs
+  await db.timers.update(t.id, { endsAt, remainingMs: null })
+  void scheduleTimerNotification(t.id, t.label, endsAt)
 }
 
 export async function addMinute(t: Timer, minutes = 1) {
   const ms = minutes * 60_000
-  if (t.endsAt != null) await db.timers.update(t.id, { endsAt: Math.max(Date.now(), t.endsAt) + ms, done: false, durationMs: t.durationMs + ms })
-  else await db.timers.update(t.id, { remainingMs: (t.remainingMs ?? 0) + ms, durationMs: t.durationMs + ms })
+  if (t.endsAt != null) {
+    const endsAt = Math.max(Date.now(), t.endsAt) + ms
+    await db.timers.update(t.id, { endsAt, done: false, durationMs: t.durationMs + ms })
+    void scheduleTimerNotification(t.id, t.label, endsAt)
+  } else await db.timers.update(t.id, { remainingMs: (t.remainingMs ?? 0) + ms, durationMs: t.durationMs + ms })
 }
 
-export const removeTimer = (id: string) => db.timers.delete(id)
+export async function removeTimer(id: string) {
+  await db.timers.delete(id)
+  void cancelTimerNotification(id)
+}
 export const markTimerDone = (id: string) => db.timers.update(id, { done: true })
 
 function ensureNotificationPermission() {
+  if (isNative) return // Android : permission demandée par le plugin de notifications
   try {
     if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
   } catch {

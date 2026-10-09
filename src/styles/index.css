@@ -6,6 +6,9 @@
 
 /* Palette « livre de cuisine » : crème, terracotta, sauge, anthracite. */
 :root {
+  /* Zones système : env() dans le navigateur, variables injectées par Capacitor sur Android. */
+  --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
   --c-bg: #f7f2ea;
   --c-paper: #fffdf9;
   --c-sunken: #efe8dc;
@@ -176,10 +179,10 @@
     scrollbar-width: none;
   }
   .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: var(--sab);
   }
   .safe-top {
-    padding-top: env(safe-area-inset-top);
+    padding-top: var(--sat);
   }
 }
 

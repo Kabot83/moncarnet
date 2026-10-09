@@ -34,7 +34,7 @@ Ouvrir http://localhost:5173. Six recettes de démonstration (dont les crêpes d
 npm test
 ```
 
-95 tests unitaires (Vitest) : calcul des proportions, unités et fractions, services de données, journal, collections, sessions, recherche sur 800 recettes, liste de courses, sauvegarde/restauration de 300 recettes et 150 photos (dont fichiers corrompus), import Schema.org, validation des réponses IA, quotas, proxy (authentification, routes, SSRF, robots.txt).
+101 tests unitaires (Vitest) : migration PWA → APK, calcul des proportions, unités et fractions, services de données, journal, collections, sessions, recherche sur 800 recettes, liste de courses, sauvegarde/restauration de 300 recettes et 150 photos (dont fichiers corrompus), import Schema.org, validation des réponses IA, quotas, proxy (authentification, routes, SSRF, robots.txt).
 
 ```bash
 npm run build && npm run test:e2e
@@ -71,23 +71,9 @@ Le carnet reste entièrement utilisable sans Chef IA.
 
 Les recettes sont stockées **uniquement sur le téléphone** (IndexedDB). Elles peuvent disparaître lors d'un changement de téléphone, d'une désinstallation ou d'un effacement des données de Chrome. **Réglages → Sauvegarde → Sauvegarder mon carnet** produit `mon-carnet-AAAA-MM-JJ-HHMM.zip` ; « Envoyer vers… » permet de le déposer sur Drive. Sur un nouveau téléphone : installer l'app, puis **Restaurer mon carnet** (fusion ou remplacement, après aperçu). L'app demande aussi au navigateur un stockage persistant.
 
-## Vers un APK (Capacitor)
+## Application Android (APK)
 
-Rien dans le code n'empêche l'encapsulation : routage par hash, chemins relatifs, aucune dépendance serveur.
-
-```bash
-npm i @capacitor/core @capacitor/android && npm i -D @capacitor/cli
-```
-
-```bash
-npx cap init "Mon Carnet" fr.moncarnet.app --web-dir dist
-```
-
-```bash
-npm run build && npx cap add android && npx cap open android
-```
-
-Dans l'APK, l'origine devient `https://localhost` (à ajouter à `ALLOWED_ORIGINS` du proxy). Plugins utiles plus tard : `@capacitor/camera`, `@capacitor/share`, `@capacitor/local-notifications` (minuteries fiables écran éteint), `@capacitor/keep-awake`.
+Mon Carnet existe aussi en application Android installable hors Play Store (Capacitor 8, identifiant `fr.kabot83.moncarnet`). L'APK est compilé automatiquement par GitHub Actions à chaque envoi et publié dans la pré-version [android-test](https://github.com/Kabot83/moncarnet/releases/tag/android-test). Installation, transfert du carnet depuis la PWA, APK debug ou release et mises à jour sans perte : voir [docs/ANDROID.md](docs/ANDROID.md).
 
 ## Architecture
 
@@ -115,7 +101,7 @@ Choix notable : pas de bibliothèque de composants externe ; les feuilles modale
 ## Reste à faire / limites connues
 
 - **Nutrition** : la table intégrée est indicative (≈ 25 aliments courants). L'intégration CIQUAL (licence Etalab) ou Open Food Facts (ODbL, attribution) se branche via `NutritionProvider` dans `src/lib/nutrition.ts`.
-- **Minuteries écran éteint** : en PWA, Android peut suspendre la page ; la notification sonne au retour. Fiabilité totale avec Capacitor + notifications locales.
+- **Minuteries écran éteint** : en PWA, Android peut suspendre la page ; l'APK programme une vraie notification Android.
 - **Import par lien sans proxy** : la plupart des sites bloquent la lecture (CORS) ; l'app propose alors l'import par texte.
 - **Glisser-déposer** pour réordonner : remplacé par des boutons monter/descendre (plus fiables au doigt et accessibles).
 - Le modèle `gemini-3.7-flash` n'a pas pu être vérifié contre votre projet : faites « Lister les modèles accessibles » dans les réglages.

@@ -8,6 +8,7 @@ import { forgetPhoto } from '@/hooks/usePhotoUrl'
 import { formatBytes, formatDate, relativeDays } from '@/lib/format'
 import { BackupError, type RestoreMode, type RestorePreview, applyRestore, backupFileName, exportBackup, previewRestore, readBackup } from '@/services/backup'
 import { useSettings } from '@/services/settings'
+import { type SavedFile, isNative, saveFile, shareSavedFile } from '@/platform/native'
 
 export default function BackupPage() {
   const settings = useSettings()
@@ -16,6 +17,7 @@ export default function BackupPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [exporting, setExporting] = useState<string | null>(null)
   const [lastFile, setLastFile] = useState<File | null>(null)
+  const [saved, setSaved] = useState<SavedFile | null>(null)
   const [reading, setReading] = useState(false)
   const [preview, setPreview] = useState<RestorePreview | null>(null)
   const [mode, setMode] = useState<RestoreMode>('merge')
@@ -28,14 +30,11 @@ export default function BackupPage() {
       const blob = await exportBackup((d, t) => setExporting(`Photos : ${d}/${t}`))
       const file = new File([blob], backupFileName(), { type: 'application/zip' })
       setLastFile(file)
-      // Téléchargement direct (dossier Téléchargements sur Android).
-      const url = URL.createObjectURL(file)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = file.name
-      a.click()
-      setTimeout(() => URL.revokeObjectURL(url), 10_000)
-      toast.success(`Sauvegarde créée (${formatBytes(file.size)})`)
+      const where = await saveFile(blob, file.name)
+      setSaved(where)
+      toast.success(`Sauvegarde créée (${formatBytes(file.size)})${isNative && where.location ? ` dans ${where.location}` : ''}`)
+      // Android : on propose aussitôt de l'envoyer ailleurs (Drive, e-mail…).
+      if (isNative) await shareSavedFile(where, 'Sauvegarde Mon Carnet')
     } catch {
       toast.error('La sauvegarde a échoué. Vérifiez l’espace disponible.')
     } finally {
@@ -45,6 +44,7 @@ export default function BackupPage() {
 
   const shareFile = async () => {
     if (!lastFile) return
+    if (saved && (await shareSavedFile(saved, 'Sauvegarde Mon Carnet'))) return
     if (navigator.canShare?.({ files: [lastFile] })) {
       try {
         await navigator.share({ files: [lastFile], title: 'Sauvegarde Mon Carnet' })

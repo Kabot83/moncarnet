@@ -1,11 +1,20 @@
 import { useEffect, useState } from 'react'
+import { isNative, nativeKeepAwake } from '@/platform/native'
 
 /** Garde l'écran allumé (API Wake Lock) tant que `active` est vrai. */
 export function useWakeLock(active: boolean): { supported: boolean; locked: boolean } {
-  const supported = typeof navigator !== 'undefined' && 'wakeLock' in navigator
+  const supported = isNative || (typeof navigator !== 'undefined' && 'wakeLock' in navigator)
   const [locked, setLocked] = useState(false)
   useEffect(() => {
     if (!active || !supported) return
+    if (isNative) {
+      // Android : maintien natif de l'écran, fiable dans la WebView.
+      void nativeKeepAwake(true).then(setLocked)
+      return () => {
+        void nativeKeepAwake(false)
+        setLocked(false)
+      }
+    }
     let sentinel: WakeLockSentinel | null = null
     let cancelled = false
     const request = async () => {

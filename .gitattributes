@@ -1,0 +1,6 @@
+# Fins de ligne Unix pour les scripts exécutés sur la CI Linux
+*.sh text eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jar binary

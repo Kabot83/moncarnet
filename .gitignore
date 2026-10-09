@@ -11,3 +11,4 @@ proxy/.wrangler
 test-results
 playwright-report
 .claude/settings.local.json
+tsconfig.tsbuildinfo

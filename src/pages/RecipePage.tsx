@@ -145,7 +145,7 @@ export default function RecipePage() {
           </>
         }
       />
-      <div className="-mt-[calc(3.5rem+env(safe-area-inset-top))]">
+      <div className="-mt-[calc(3.5rem+var(--sat))]">
         <div className="relative mx-auto aspect-[4/3] max-h-[60vh] w-full max-w-3xl overflow-hidden sm:rounded-b-[2rem]">
           <Photo id={recipe.mainPhotoId} alt={recipe.title} variant="full" className="size-full" fallback={<PhotoPlaceholder title={recipe.title} className="size-full" />} />
           <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/45 to-transparent" />

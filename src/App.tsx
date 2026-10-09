@@ -9,6 +9,7 @@ import { seedDemoData } from './db/seed'
 import { findUrl } from './importers/url'
 import { collectOrphanPhotos } from './services/photos'
 import { getSettings, updateSettings, useSettings } from './services/settings'
+import { initNative, setSystemBarsDark } from './platform/native'
 import HomePage from './pages/HomePage'
 import RecipesPage from './pages/RecipesPage'
 import RecipePage from './pages/RecipePage'
@@ -32,6 +33,7 @@ const AboutPage = lazy(() => import('./pages/AboutPage'))
 let boot: Promise<void> | null = null
 function bootstrap() {
   boot ??= (async () => {
+    void initNative()
     const s = await getSettings()
     if (!s.demoSeeded) {
       await updateSettings({ demoSeeded: true })
@@ -64,6 +66,7 @@ export function App() {
       const dark = settings.theme === 'dark' || (settings.theme === 'system' && mq.matches)
       document.documentElement.classList.toggle('dark', dark)
       document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', dark ? '#1B1916' : '#F7F2EA'))
+      void setSystemBarsDark(dark)
     }
     apply()
     mq.addEventListener('change', apply)

@@ -1,0 +1,125 @@
+name: APK Android
+
+# Compile l'application Android dans le cloud GitHub (aucun Android Studio nécessaire).
+# Résultat : un APK installable, disponible
+#   - dans les « Artifacts » de chaque exécution (onglet Actions),
+#   - dans la pré-version « android-test » (onglet Releases), pratique depuis un téléphone.
+#
+# Signature :
+#   - Sans secrets : APK « debug » de test, signé avec une clé de débogage conservée en cache.
+#   - Avec les secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
+#     ANDROID_KEY_PASSWORD : APK « release » signé avec votre clé permanente (voir docs/ANDROID.md).
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write # publication de la pré-version « android-test »
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HAS_RELEASE_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Installer les dependances
+        run: npm ci
+
+      - name: Tests unitaires
+        run: npm test
+
+      - name: Compiler la version Android (sans service worker)
+        run: npm run build:android
+
+      - name: Installer Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Installer le SDK Android
+        uses: android-actions/setup-android@v3
+
+      - name: Synchroniser Capacitor
+        run: npx cap sync android
+
+      - name: Numero de version
+        run: |
+          # versionCode toujours croissant (minutes écoulées depuis le 1er janvier 2026) :
+          # chaque nouvel APK peut s'installer par-dessus le précédent, sans perte de données.
+          echo "VERSION_CODE=$(( ( $(date +%s) - 1767225600 ) / 60 ))" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      - name: Cle de debogage stable
+        # Sans clé stable, chaque compilation aurait une signature différente et Android
+        # refuserait la mise à jour (désinstallation obligatoire = perte du carnet).
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: moncarnet-debug-keystore-v1
+
+      - name: Compiler l'APK de test (debug)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug -PversionCode="$VERSION_CODE" -PversionName="$VERSION_NAME"
+
+      - name: Compiler l'APK release signe
+        if: env.HAS_RELEASE_KEY == 'true'
+        working-directory: android
+        env:
+          MC_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          MC_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          MC_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          # La clé n'existe que le temps de la compilation, hors du dépôt.
+          export MC_KEYSTORE_FILE="$RUNNER_TEMP/moncarnet-release.jks"
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$MC_KEYSTORE_FILE"
+          ./gradlew --no-daemon assembleRelease -PversionCode="$VERSION_CODE" -PversionName="$VERSION_NAME"
+          rm -f "$MC_KEYSTORE_FILE"
+
+      - name: Renommer les APK
+        run: |
+          mkdir -p apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk "apk/MonCarnet-${VERSION_NAME}-${VERSION_CODE}-test.apk"
+          if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk "apk/MonCarnet-${VERSION_NAME}-${VERSION_CODE}.apk"
+          fi
+          ls -la apk
+
+      - name: Mettre l'APK dans les artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MonCarnet-${{ env.VERSION_NAME }}-${{ env.VERSION_CODE }}
+          path: apk/*.apk
+          retention-days: 30
+
+      - name: Publier la pre-version android-test
+        if: github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android-test --yes --cleanup-tag || true
+          gh release create android-test apk/*.apk \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Mon Carnet Android — dernière version de test" \
+            --notes "APK compilé automatiquement le $(date -u '+%d/%m/%Y à %H:%M') UTC (version ${VERSION_NAME}, code ${VERSION_CODE}). Avant d’installer une nouvelle version : Réglages → Sauvegarde → Sauvegarder mon carnet."

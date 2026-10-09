@@ -2,6 +2,7 @@ import { BellRing, Pause, Play, Plus, Timer as TimerIcon, X } from 'lucide-react
 import { useEffect, useRef, useState } from 'react'
 import { formatClock } from '@/lib/format'
 import type { Timer } from '@/models/types'
+import { isNative } from '@/platform/native'
 import { addMinute, markTimerDone, pauseTimer, removeTimer, resumeTimer, useTimers } from '@/services/sessions'
 import { IconButton } from './ui/Button'
 import { Sheet } from './ui/Sheet'
@@ -54,7 +55,8 @@ async function notify(label: string) {
   }
   chime()
   try {
-    if ('Notification' in window && Notification.permission === 'granted') {
+    // Android : la notification système est déjà programmée à l'heure exacte.
+    if (!isNative && 'Notification' in window && Notification.permission === 'granted') {
       const reg = await navigator.serviceWorker?.getRegistration()
       const opts = { body: `${label} : c’est prêt !`, tag: `timer-${label}`, icon: 'icons/icon-192.png' }
       if (reg) await reg.showNotification('Minuterie terminée', opts)
@@ -146,7 +148,7 @@ export function TimersDock() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`fixed left-4 bottom-[calc(5.6rem+env(safe-area-inset-bottom))] z-30 flex h-12 items-center gap-2 rounded-full px-4 font-semibold shadow-[var(--shadow-float)] animate-fade-up ${
+        className={`fixed left-4 bottom-[calc(5.6rem+var(--sab))] z-30 flex h-12 items-center gap-2 rounded-full px-4 font-semibold shadow-[var(--shadow-float)] animate-fade-up ${
           doneCount ? 'bg-terra text-white dark:text-[#1b1916]' : 'bg-ink text-bg'
         }`}
         aria-label={`${timers.length} minuterie(s). Ouvrir`}
