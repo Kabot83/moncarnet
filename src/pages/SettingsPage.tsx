@@ -89,7 +89,7 @@ export default function SettingsPage() {
           />
         </div>
         <Switch label="Autoriser les demi-œufs" description="Sinon, les œufs sont arrondis à l’unité." checked={settings.allowHalfEggs} onChange={(v) => void updateSettings({ allowHalfEggs: v })} />
-        <Switch label="Informations nutritionnelles" description="Module facultatif sur les fiches recettes." checked={settings.nutritionEnabled} onChange={(v) => void updateSettings({ nutritionEnabled: v })} />
+        <Switch label="Informations nutritionnelles" description="Calories et macros calculées depuis CIQUAL et Open Food Facts." checked={settings.nutritionEnabled} onChange={(v) => void updateSettings({ nutritionEnabled: v })} />
       </SettingsGroup>
 
       <SettingsGroup title="Assistant">

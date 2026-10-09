@@ -12,3 +12,5 @@ test-results
 playwright-report
 .claude/settings.local.json
 tsconfig.tsbuildinfo
+# Fichiers officiels téléchargés (le catalogue généré, src/data/ciqual-2025.json, est versionné)
+scripts/sources/

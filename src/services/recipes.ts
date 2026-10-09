@@ -31,6 +31,8 @@ export function emptyIngredient(partial: Partial<Ingredient> = {}): Ingredient {
     group: '',
     scalable: !suggestNonScalable(name),
     toTaste: false,
+    nutrition: null,
+    nutritionExcluded: false,
     ...partial,
   }
 }
@@ -130,6 +132,9 @@ export function buildVariant(recipe: Recipe, scale: ScaleState, title?: string):
     lastCookedAt: null,
     variantOf: recipe.id,
     isDemo: false,
+    // Les quantités changent : le plat cuit devra être pesé à nouveau.
+    cookedWeightG: null,
+    cookedWeightRawG: null,
     nutrition: recipe.nutrition
       ? {
           ...recipe.nutrition,

@@ -1,5 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
+  Apple,
   Bookmark,
   BookmarkCheck,
   ChefHat,
@@ -27,6 +28,7 @@ import { IngredientScaler } from '@/components/IngredientScaler'
 import { JournalEntrySheet } from '@/components/JournalEntrySheet'
 import { NotesSection } from '@/components/NotesSection'
 import { NutritionPanel } from '@/components/NutritionPanel'
+import { FoodLinkSheet } from '@/components/nutrition/FoodLinkSheet'
 import { ShoppingBuilder } from '@/components/ShoppingBuilder'
 import { SubstitutionSheet } from '@/components/SubstitutionSheet'
 import { Button, IconButton } from '@/components/ui/Button'
@@ -65,6 +67,7 @@ export default function RecipePage() {
   const [variantTitle, setVariantTitle] = useState('')
   const [ingMenu, setIngMenu] = useState<Ingredient | null>(null)
   const [subFor, setSubFor] = useState<Ingredient | null>(null)
+  const [foodFor, setFoodFor] = useState<Ingredient | null>(null)
 
   if (recipe === undefined) return <LoadingBlock />
   if (recipe === null || !recipe)
@@ -395,6 +398,16 @@ export default function RecipePage() {
 
       <Sheet open={!!ingMenu} onClose={() => setIngMenu(null)} title={ingMenu?.name}>
         <nav className="grid gap-1 pb-2">
+          {settings.nutritionEnabled && (
+            <MenuItem
+              icon={Apple}
+              label={ingMenu?.nutrition ? 'Valeurs nutritionnelles : ' + ingMenu.nutrition.food.name : 'Associer les valeurs nutritionnelles'}
+              onClick={() => {
+                setFoodFor(ingMenu)
+                setIngMenu(null)
+              }}
+            />
+          )}
           <MenuItem
             icon={Sparkles}
             label="Par quoi le remplacer ? (Chef IA)"
@@ -424,6 +437,7 @@ export default function RecipePage() {
       <JournalEntrySheet open={journalOpen} onClose={() => setJournalOpen(false)} recipe={recipe} scale={session?.scale ?? null} />
       <CollectionPicker open={collectionsOpen} onClose={() => setCollectionsOpen(false)} recipeId={recipe.id} />
       <ShoppingBuilder open={shoppingOpen} onClose={() => setShoppingOpen(false)} recipeIds={[recipe.id]} />
+      <FoodLinkSheet open={!!foodFor} onClose={() => setFoodFor(null)} recipeId={recipe.id} ingredient={foodFor} />
       <SubstitutionSheet open={!!subFor} onClose={() => setSubFor(null)} recipe={recipe} ingredient={subFor} />
     </>
   )

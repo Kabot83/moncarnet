@@ -23,6 +23,8 @@ const ing = (id: string, name: string, quantity: number | null, unit = '', extra
   group: '',
   scalable: true,
   toTaste: false,
+  nutrition: null,
+  nutritionExcluded: false,
   ...extra,
 })
 

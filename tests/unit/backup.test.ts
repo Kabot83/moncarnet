@@ -118,3 +118,59 @@ describe('sauvegarde et restauration', () => {
     await expect(readBackup(new Blob([(await future.generateAsync({ type: 'uint8array' })) as BlobPart]))).rejects.toThrow(/plus récente/)
   })
 })
+
+describe('sauvegarde des données nutritionnelles', () => {
+  beforeEach(reset)
+
+  it('restaure associations, corrections, poids cuit, favoris et mémoire', async () => {
+    const { seedDemoData } = await import('@/db/seed')
+    const { rememberFood, toggleFoodFavorite, setCookedWeight, setIngredientNutrition } = await import('@/nutrition/foods')
+    await seedDemoData()
+    const pancakes = (await db.recipes.where('title').equals('Pancakes protéinés').first())!
+    const whey = pancakes.ingredients.find((i) => i.name === 'whey isolate')!
+    await setIngredientNutrition(pancakes.id, whey.id, { nutrition: { ...whey.nutrition!, overrides: { protein: 90 } } })
+    await setCookedWeight((await db.recipes.get(pancakes.id))!, 380)
+    await rememberFood(whey.nutrition!.food, 'whey isolate', whey.nutrition!)
+    await toggleFoodFavorite(whey.nutrition!.food)
+    const before = await db.recipes.get(pancakes.id)
+    const foods = await db.foods.toArray()
+    const memory = await db.foodMemory.toArray()
+    const blob = await exportBackup()
+
+    await reset()
+    await applyRestore(await readBackup(blob), 'replace')
+    const after = await db.recipes.get(pancakes.id)
+    expect(after).toEqual(before)
+    expect(after!.cookedWeightG).toBe(380)
+    expect(after!.ingredients.find((i) => i.name === 'whey isolate')!.nutrition!.overrides).toEqual({ protein: 90 })
+    expect(await db.foods.toArray()).toEqual(foods)
+    expect(await db.foodMemory.toArray()).toEqual(memory)
+    expect((await db.foods.toArray())[0].favorite).toBe(true)
+  })
+
+  it('reste compatible avec les anciennes sauvegardes (format v1, sans nutrition)', async () => {
+    await fill(3)
+    const zip = await JSZip.loadAsync(await (await exportBackup()).arrayBuffer())
+    const data = JSON.parse(await zip.file('data.json')!.async('string'))
+    data.version = 1
+    delete data.foods
+    delete data.foodMemory
+    for (const r of data.recipes) {
+      delete r.cookedWeightG
+      delete r.cookedWeightRawG
+      for (const i of r.ingredients) {
+        delete i.nutrition
+        delete i.nutritionExcluded
+      }
+    }
+    zip.file('data.json', JSON.stringify(data))
+    await reset()
+    const parsed = await readBackup(new Blob([(await zip.generateAsync({ type: 'uint8array' })) as BlobPart]))
+    expect(parsed.recipes).toHaveLength(3)
+    expect(parsed.foods).toEqual([])
+    expect(parsed.recipes[0].ingredients[0]).toMatchObject({ nutrition: null, nutritionExcluded: false })
+    expect(parsed.recipes[0].cookedWeightG).toBeNull()
+    await applyRestore(parsed, 'replace')
+    expect(await db.recipes.count()).toBe(3)
+  })
+})

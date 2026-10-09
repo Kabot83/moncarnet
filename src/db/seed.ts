@@ -5,17 +5,31 @@
 import { newId } from '@/lib/id'
 import { suggestNonScalable } from '@/lib/scaling'
 import type { Collection, Ingredient, JournalEntry, Recipe, Step } from '@/models/types'
-import { RecipeSchema } from '@/models/types'
+import { FoodLinkSchema, RecipeSchema } from '@/models/types'
+import { ciqualToFood, getCiqualFood } from '@/nutrition/ciqual'
+import { offToFood } from '@/nutrition/off'
 import { db } from './db'
+import { DEMO_OFF_PRODUCTS } from './demoFoods'
 import { type DemoKey, demoIllustration } from './illustrations'
 
 const DAY = 86_400_000
 
-type IngSpec = [quantity: number | null, unit: string, name: string, extra?: Partial<Ingredient>]
+/** Référence nutritionnelle réelle d'un ingrédient de démonstration (résolue à l'installation). */
+interface NutriSpec {
+  ciqual?: string
+  off?: keyof typeof DEMO_OFF_PRODUCTS
+  gramsPerUnit?: number
+  density?: number
+}
+type IngSpec = [quantity: number | null, unit: string, name: string, extra?: Partial<Ingredient>, nutri?: NutriSpec]
+const nutriSpecs = new Map<string, NutriSpec>()
 
 function ings(group: string, list: IngSpec[]): Ingredient[] {
-  return list.map(([quantity, unit, name, extra]) => ({
-    id: newId('i_'),
+  return list.map(([quantity, unit, name, extra, nutri]) => {
+    const id = newId('i_')
+    if (nutri) nutriSpecs.set(id, nutri)
+    return {
+    id,
     name,
     quantity,
     unit,
@@ -24,8 +38,23 @@ function ings(group: string, list: IngSpec[]): Ingredient[] {
     group,
     scalable: !suggestNonScalable(name),
     toTaste: false,
+    nutrition: null,
+    nutritionExcluded: false,
     ...extra,
-  }))
+  }
+  })
+}
+
+/** Associe les vraies références (CIQUAL 2025, fiches Open Food Facts) aux ingrédients de démonstration. */
+async function resolveNutrition(ingredients: Ingredient[]): Promise<Ingredient[]> {
+  return Promise.all(
+    ingredients.map(async (ing) => {
+      const spec = nutriSpecs.get(ing.id)
+      if (!spec) return ing
+      const food = spec.ciqual ? ciqualToFood((await getCiqualFood(spec.ciqual))!) : offToFood(DEMO_OFF_PRODUCTS[spec.off!])!
+      return { ...ing, nutrition: FoodLinkSchema.parse({ food, gramsPerUnit: spec.gramsPerUnit ?? null, density: spec.density ?? null, linkedAt: Date.now() }) }
+    }),
+  )
 }
 
 function steps(list: Array<string | [string, Partial<Step>]>): Step[] {
@@ -164,18 +193,19 @@ function specs(): DemoSpec[] {
         rating: 5,
         favorite: true,
         ingredients: ings('', [
-          [2, '', 'œufs'],
-          [150, 'g', 'skyr nature'],
-          [60, 'g', "flocons d'avoine mixés"],
-          [30, 'g', 'whey vanille'],
-          [80, 'ml', 'lait demi-écrémé'],
-          [5, 'g', 'levure chimique', { scalable: false }],
-          [1, 'pincée', 'sel', { scalable: false }],
+          [2, '', 'œufs', { note: 'environ 50 g chacun sans coquille' }, { ciqual: '22000', gramsPerUnit: 50 }],
+          [150, 'g', 'skyr nature 0 %', {}, { off: 'skyr' }],
+          [40, 'g', "flocons d'avoine mixés", {}, { ciqual: '32140' }],
+          [20, 'g', 'farine de sarrasin', {}, { ciqual: '9540' }],
+          [30, 'g', 'whey isolate', {}, { off: 'wheyIsolate' }],
+          [80, 'ml', 'lait demi-écrémé', { note: 'masse volumique 1,03 g/ml' }, { ciqual: '19041', density: 1.03 }],
+          [5, 'g', 'levure chimique', { scalable: false }, { ciqual: '11046' }],
+          [1, 'pincée', 'sel', { scalable: false, nutritionExcluded: true }],
           [null, '', 'myrtilles pour servir', { toTaste: true }],
         ]),
         steps: steps([
           'Mixer les flocons d’avoine en farine fine.',
-          'Fouetter les œufs avec le skyr et le lait, puis ajouter avoine, whey, levure et sel. Laisser reposer 5 minutes.',
+          'Fouetter les œufs avec le skyr et le lait, puis ajouter avoine, farine de sarrasin, whey, levure et sel. Laisser reposer 5 minutes.',
           ['Cuire des petites louches de pâte dans une poêle légèrement huilée, 2 minutes par face à feu moyen.', { durationMin: 15, timerMin: 2 }],
           'Servir avec des myrtilles et un filet de miel.',
         ]),
@@ -185,7 +215,6 @@ function specs(): DemoSpec[] {
           storage: '2 jours au réfrigérateur, se congèlent séparés par du papier cuisson.',
           reheating: 'Grille-pain ou 30 secondes au micro-ondes.',
         }),
-        nutrition: { total: { kcal: 760, protein: 68, carbs: 62, fat: 22, fiber: 6 }, source: 'manual', updatedAt: Date.now() },
       },
       journal: [
         { daysAgo: 3, rating: 5, comment: 'Version 3 œufs : plus aérien.', modifications: 'Passé à 3 œufs, tout ajusté' },
@@ -268,7 +297,6 @@ function specs(): DemoSpec[] {
           ideas: 'Ajouter un trait de café serré ou des noisettes torréfiées.',
           storage: '3 jours sous cloche.',
         }),
-        nutrition: { total: { kcal: 3220, protein: 44, carbs: 270, fat: 222, fiber: 22 }, source: 'manual', updatedAt: Date.now() },
       },
       journal: [
         { daysAgo: 40, rating: 5, comment: 'Anniversaire de Léa. 21 minutes, parfait.', actualCookTime: 21, temperatureC: 180 },
@@ -290,11 +318,11 @@ function specs(): DemoSpec[] {
         rating: 4,
         toTry: false,
         ingredients: ings('', [
-          [3, '', 'œufs'],
-          [100, 'g', 'farine'],
-          [300, 'ml', 'lait'],
-          [30, 'g', 'beurre fondu'],
-          [1, 'pincée', 'sel'],
+          [3, '', 'œufs', { note: 'environ 50 g chacun sans coquille' }, { ciqual: '22000', gramsPerUnit: 50 }],
+          [100, 'g', 'farine', { note: 'type T45' }, { ciqual: '9440' }],
+          [300, 'ml', 'lait', { note: 'demi-écrémé' }, { ciqual: '19033', density: 1.03 }],
+          [30, 'g', 'beurre fondu', {}, { ciqual: '16400' }],
+          [1, 'pincée', 'sel', { nutritionExcluded: true }],
           [null, '', 'sucre', { toTaste: true, quantityText: '' }],
         ]),
         steps: steps([
@@ -332,6 +360,7 @@ export async function seedDemoData(): Promise<void> {
     const created = now - (200 - index * 10) * DAY
     const recipe = RecipeSchema.parse({
       ...spec.recipe,
+      ingredients: await resolveNutrition(spec.recipe.ingredients ?? []),
       id: newId('r_'),
       mainPhotoId: photoId,
       isDemo: true,

@@ -354,9 +354,18 @@ function IngredientEditor({
           <ChevronDown size={18} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </IconButton>
       </div>
-      {(!ing.scalable || ing.toTaste || ing.group || ing.note) && !expanded && (
+      {(!ing.scalable || ing.toTaste || ing.group || ing.note || ing.nutrition || ing.nutritionExcluded) && !expanded && (
         <p className="mt-1.5 px-1 text-xs text-muted">
-          {[ing.group && `Groupe : ${ing.group}`, !ing.scalable && 'Quantité fixe', ing.toTaste && 'Selon le goût', ing.note].filter(Boolean).join(' · ')}
+          {[
+            ing.group && `Groupe : ${ing.group}`,
+            !ing.scalable && 'Quantité fixe',
+            ing.toTaste && 'Selon le goût',
+            ing.nutrition && `Nutrition : ${ing.nutrition.food.name}`,
+            ing.nutritionExcluded && 'Hors calcul nutritionnel',
+            ing.note,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </p>
       )}
       {expanded && (
@@ -372,6 +381,16 @@ function IngredientEditor({
             onChange={(v) => onChange({ scalable: v })}
           />
           <Switch label="Selon le goût" checked={ing.toTaste} onChange={(v) => onChange({ toTaste: v })} />
+          {ing.nutrition && (
+            <div className="flex items-center gap-2 rounded-xl bg-sunken p-2.5 text-sm">
+              <span className="min-w-0 flex-1 truncate">
+                Nutrition : <strong>{ing.nutrition.food.name}</strong>
+              </span>
+              <Button size="sm" variant="ghost" onClick={() => onChange({ nutrition: null })}>
+                Retirer
+              </Button>
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <div className="flex gap-1">
               <IconButton label="Monter" size="sm" disabled={index === 0} onClick={() => onMove(-1)}>

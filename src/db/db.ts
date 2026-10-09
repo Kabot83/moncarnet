@@ -9,6 +9,7 @@
 import Dexie, { type Table } from 'dexie'
 import type {
   Collection,
+  Food,
   Conversation,
   CookingSession,
   Draft,
@@ -30,8 +31,29 @@ export interface AiUsageRow {
   count: number
 }
 
+/** Aliment utilisé (favori, récent, produit Open Food Facts en cache, aliment personnel). */
+export interface FoodEntry {
+  /** « ciqual:9435 », « off:3229820787015 », « custom:… » */
+  key: string
+  food: Food
+  favorite: boolean
+  lastUsedAt: number
+  useCount: number
+  updatedAt: number
+}
+
+/** Mémoire des associations : « farine d'avoine » → aliment choisi la dernière fois. */
+export interface FoodMemory {
+  /** Nom d'ingrédient normalisé. */
+  nameKey: string
+  foodKey: string
+  gramsPerUnit: number | null
+  density: number | null
+  updatedAt: number
+}
+
 export const DB_NAME = 'mon-carnet'
-export const DB_VERSION = 2
+export const DB_VERSION = 3
 
 export class CarnetDB extends Dexie {
   recipes!: Table<Recipe, string>
@@ -47,6 +69,8 @@ export class CarnetDB extends Dexie {
   /** Secrets (clé API, jeton du proxy) : table séparée, jamais exportée. */
   secrets!: Table<SettingRow, string>
   aiUsage!: Table<AiUsageRow, string>
+  foods!: Table<FoodEntry, string>
+  foodMemory!: Table<FoodMemory, string>
 
   constructor(name = DB_NAME) {
     super(name)
@@ -76,6 +100,26 @@ export class CarnetDB extends Dexie {
           .modify((r: Partial<Recipe>) => {
             r.rating ??= 0
             r.cookCount ??= 0
+          })
+      })
+    // v3 : nutrition (aliments utilisés, mémoire des associations, poids après cuisson).
+    // Les recettes existantes reçoivent les nouveaux champs vides : rien n'est associé d'office.
+    this.version(3)
+      .stores({
+        foods: 'key, favorite, lastUsedAt, updatedAt',
+        foodMemory: 'nameKey, updatedAt',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('recipes')
+          .toCollection()
+          .modify((r: Partial<Recipe>) => {
+            r.cookedWeightG ??= null
+            r.cookedWeightRawG ??= null
+            r.ingredients?.forEach((i) => {
+              i.nutrition ??= null
+              i.nutritionExcluded ??= false
+            })
           })
       })
   }

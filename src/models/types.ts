@@ -31,6 +31,69 @@ export const difficultyLabel = (d: Difficulty) => DIFFICULTIES.find((x) => x.id 
 const id = z.string().min(1).max(64)
 const minutes = z.number().min(0).max(60 * 24 * 7).nullable()
 
+// ---------------------------------------------------------------------------
+// Nutrition : référence d'un ingrédient vers un aliment CIQUAL / Open Food Facts / personnel
+// ---------------------------------------------------------------------------
+
+export const NUTRIENT_KEYS = ['kcal', 'kj', 'protein', 'carbs', 'fat', 'fiber', 'sugars', 'satFat', 'salt'] as const
+export type NutrientKey = (typeof NUTRIENT_KEYS)[number]
+/** Les quatre indicateurs principaux. */
+export const MAIN_NUTRIENTS = ['kcal', 'protein', 'carbs', 'fat'] as const satisfies readonly NutrientKey[]
+
+/**
+ * Teneur pour 100 g (ou 100 ml) : nombre, `null` = inconnue (jamais zéro),
+ * `"t"` = traces, `"<x"` = inférieure au seuil x (conventions CIQUAL).
+ */
+export const NutrientValueSchema = z.union([z.number().min(0).max(100000), z.null(), z.literal('t'), z.string().regex(/^<\d+(\.\d+)?$/)])
+export type NutrientValue = z.infer<typeof NutrientValueSchema>
+
+export const FoodSourceSchema = z.enum(['ciqual', 'off', 'custom'])
+export type FoodSource = z.infer<typeof FoodSourceSchema>
+
+const nv = () => NutrientValueSchema.default(null)
+export const Per100Schema = z.object({
+  kcal: nv(),
+  kj: nv(),
+  protein: nv(),
+  carbs: nv(),
+  fat: nv(),
+  fiber: nv(),
+  sugars: nv(),
+  satFat: nv(),
+  salt: nv(),
+})
+export type Per100 = z.infer<typeof Per100Schema>
+
+/** Aliment nutritionnel (référence copiée dans la recette : elle reste autonome hors ligne). */
+export const FoodSchema = z.object({
+  source: FoodSourceSchema,
+  /** Code CIQUAL (alim_code), code-barres Open Food Facts, ou identifiant personnel. */
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(300),
+  brand: z.string().max(200).default(''),
+  /** Les valeurs sont pour 100 g ou pour 100 ml. */
+  basis: z.enum(['100g', '100ml']).default('100g'),
+  per100: Per100Schema,
+  /** Édition / date de la donnée (« Ciqual 2025 », date de modification OFF…). */
+  version: z.string().max(80).default(''),
+  /** Remarques de provenance (énergie convertie depuis les kJ, produit incomplet…). */
+  notes: z.array(z.string().max(200)).max(10).default([]),
+  fetchedAt: z.number().default(0),
+})
+export type Food = z.infer<typeof FoodSchema>
+
+export const FoodLinkSchema = z.object({
+  food: FoodSchema,
+  /** Poids comestible d'une pièce (œuf, banane…), renseigné ou validé par l'utilisateur. */
+  gramsPerUnit: z.number().positive().max(100000).nullable().default(null),
+  /** Masse volumique (g/ml) renseignée par l'utilisateur, pour passer des ml aux g. */
+  density: z.number().positive().max(30).nullable().default(null),
+  /** Corrections manuelles, prioritaires sur la source (pour 100 g/ml). */
+  overrides: z.partialRecord(z.enum(NUTRIENT_KEYS), z.number().min(0).max(100000)).default({}),
+  linkedAt: z.number().default(0),
+})
+export type FoodLink = z.infer<typeof FoodLinkSchema>
+
 export const IngredientSchema = z.object({
   id,
   name: z.string().max(200),
@@ -46,6 +109,10 @@ export const IngredientSchema = z.object({
   scalable: z.boolean().default(true),
   /** « Selon le goût » : jamais recalculé. */
   toTaste: z.boolean().default(false),
+  /** Référence nutritionnelle choisie par l'utilisateur (jamais associée automatiquement). */
+  nutrition: FoodLinkSchema.nullable().default(null),
+  /** Exclu volontairement du calcul nutritionnel (eau de cuisson…). */
+  nutritionExcluded: z.boolean().default(false),
 })
 export type Ingredient = z.infer<typeof IngredientSchema>
 
@@ -130,6 +197,10 @@ export const RecipeSchema = z.object({
   /** Champs dénormalisés depuis le journal, pour trier et filtrer vite. */
   cookCount: z.number().int().min(0).default(0),
   lastCookedAt: z.number().nullable().default(null),
+  /** Poids de la préparation après cuisson (g), pesé par l'utilisateur. */
+  cookedWeightG: z.number().positive().max(1e6).nullable().default(null),
+  /** Poids total des ingrédients au moment de la pesée : sert à détecter qu'il faut la refaire. */
+  cookedWeightRawG: z.number().positive().max(1e6).nullable().default(null),
 })
 export type Recipe = z.infer<typeof RecipeSchema>
 

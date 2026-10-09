@@ -32,6 +32,8 @@ async function snapshot() {
     conversations: await db.conversations.orderBy('id').toArray(),
     profile: await getProfile(),
     photos,
+    foods: await db.foods.orderBy('key').toArray(),
+    foodMemory: await db.foodMemory.orderBy('nameKey').toArray(),
   }
 }
 
@@ -106,6 +108,8 @@ describe('migration PWA → APK par sauvegarde ZIP', () => {
     expect(after.conversations).toEqual(before.conversations)
     expect(after.profile).toEqual(before.profile)
     expect(after.photos).toEqual(before.photos)
+    expect(after.foods).toEqual(before.foods)
+    expect(after.foodMemory).toEqual(before.foodMemory)
     // Préférences non sensibles reprises, clé API jamais transférée.
     const settings = (await db.settings.get('app'))?.value as { rounding: string; allowHalfEggs: boolean }
     expect(settings.rounding).toBe('precise')

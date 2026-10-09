@@ -12,7 +12,7 @@
  */
 import JSZip from 'jszip'
 import { z } from 'zod'
-import { db } from '@/db/db'
+import { type FoodEntry, type FoodMemory, db } from '@/db/db'
 import {
   type AppSettings,
   type Collection,
@@ -27,12 +27,14 @@ import {
   type ShoppingItem,
   ShoppingItemSchema,
   defaultSettings,
+  FoodSchema,
   emptyProfile,
 } from '@/models/types'
 import { getProfile, getSettings, updateSettings } from './settings'
 
 export const BACKUP_FORMAT = 'mon-carnet-backup'
-export const BACKUP_VERSION = 1
+/** v2 : données nutritionnelles personnelles (aliments utilisés, mémoire des associations). */
+export const BACKUP_VERSION = 2
 const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'
 
 /** Réglages exportables (aucun secret, rien de propre à l'appareil). */
@@ -71,9 +73,28 @@ const EnvelopeSchema = z.object({
   collections: z.array(z.unknown()).default([]),
   shopping: z.array(z.unknown()).default([]),
   conversations: z.array(z.unknown()).default([]),
+  foods: z.array(z.unknown()).default([]),
+  foodMemory: z.array(z.unknown()).default([]),
   profile: z.record(z.string(), z.string()).default({}),
   settings: z.record(z.string(), z.unknown()).default({}),
   photos: z.array(z.unknown()).default([]),
+})
+
+const FoodEntrySchema = z.object({
+  key: z.string().min(1).max(100),
+  food: FoodSchema,
+  favorite: z.boolean().default(false),
+  lastUsedAt: z.number().default(0),
+  useCount: z.number().int().min(0).default(0),
+  updatedAt: z.number().default(0),
+})
+
+const FoodMemorySchema = z.object({
+  nameKey: z.string().min(1).max(300),
+  foodKey: z.string().min(1).max(100),
+  gramsPerUnit: z.number().positive().nullable().default(null),
+  density: z.number().positive().nullable().default(null),
+  updatedAt: z.number().default(0),
 })
 
 const ConversationSchema = z
@@ -104,7 +125,7 @@ export interface ExportProgress {
 
 export async function exportBackup(onProgress?: ExportProgress): Promise<Blob> {
   const zip = new JSZip()
-  const [recipes, journal, collections, shopping, conversations, profile, settings] = await Promise.all([
+  const [recipes, journal, collections, shopping, conversations, profile, settings, foods, foodMemory] = await Promise.all([
     db.recipes.toArray(),
     db.journal.toArray(),
     db.collections.toArray(),
@@ -112,6 +133,8 @@ export async function exportBackup(onProgress?: ExportProgress): Promise<Blob> {
     db.conversations.toArray(),
     getProfile(),
     getSettings(),
+    db.foods.toArray(),
+    db.foodMemory.toArray(),
   ])
   const photoEntries: z.infer<typeof PhotoEntrySchema>[] = []
   const total = await db.photos.count()
@@ -162,6 +185,8 @@ export async function exportBackup(onProgress?: ExportProgress): Promise<Blob> {
     collections,
     shopping,
     conversations,
+    foods,
+    foodMemory,
     profile,
     settings: exportedSettings,
     photos: photoEntries,
@@ -196,6 +221,8 @@ export interface ParsedBackup {
   collections: Collection[]
   shopping: ShoppingItem[]
   conversations: Conversation[]
+  foods: FoodEntry[]
+  foodMemory: FoodMemory[]
   profile: CulinaryProfile
   settings: Partial<AppSettings>
   photos: Photo[]
@@ -218,6 +245,8 @@ export interface RestorePreview {
 
 /** Migrations du format de sauvegarde : version N → N+1. */
 const MIGRATIONS: Record<number, (d: Record<string, unknown>) => Record<string, unknown>> = {
+  // v1 → v2 : pas encore de données nutritionnelles personnelles.
+  1: (d) => ({ ...d, version: 2, foods: [], foodMemory: [] }),
   // 1: (d) => ({ ...d, version: 2, ... }),
 }
 
@@ -357,6 +386,8 @@ export async function readBackup(file: Blob): Promise<ParsedBackup> {
     collections: collections.ok,
     shopping: shopping.ok,
     conversations: conversations.ok as unknown as Conversation[],
+    foods: validateEach(e.foods, FoodEntrySchema).ok,
+    foodMemory: validateEach(e.foodMemory, FoodMemorySchema).ok,
     profile: { ...emptyProfile(), ...(e.profile as Partial<CulinaryProfile>) },
     settings,
     photos,
@@ -407,7 +438,7 @@ export type RestoreMode = 'merge' | 'replace'
  * Les secrets et le compteur d'appels IA ne sont jamais touchés.
  */
 export async function applyRestore(b: ParsedBackup, mode: RestoreMode): Promise<{ recipes: number; photos: number }> {
-  const tables = [db.recipes, db.photos, db.journal, db.collections, db.shopping, db.conversations, db.sessions, db.timers, db.drafts, db.settings]
+  const tables = [db.recipes, db.photos, db.journal, db.collections, db.shopping, db.conversations, db.sessions, db.timers, db.drafts, db.settings, db.foods, db.foodMemory]
   let recipesWritten = 0
   let photosWritten = 0
   await db.transaction('rw', tables, async () => {
@@ -419,6 +450,8 @@ export async function applyRestore(b: ParsedBackup, mode: RestoreMode): Promise<
         db.collections.clear(),
         db.shopping.clear(),
         db.conversations.clear(),
+        db.foods.clear(),
+        db.foodMemory.clear(),
         db.sessions.clear(),
         db.timers.clear(),
         db.drafts.clear(),
@@ -429,6 +462,8 @@ export async function applyRestore(b: ParsedBackup, mode: RestoreMode): Promise<
       await db.collections.bulkPut(b.collections)
       await db.shopping.bulkPut(b.shopping)
       await db.conversations.bulkPut(b.conversations)
+      await db.foods.bulkPut(b.foods)
+      await db.foodMemory.bulkPut(b.foodMemory)
       await db.settings.put({ key: 'profile', value: b.profile })
       recipesWritten = b.recipes.length
       photosWritten = b.photos.length
@@ -458,6 +493,16 @@ export async function applyRestore(b: ParsedBackup, mode: RestoreMode): Promise<
     }
     const localConv = new Set(await db.conversations.toCollection().primaryKeys())
     await db.conversations.bulkPut(b.conversations.filter((c) => !localConv.has(c.id)))
+    // Aliments et associations : la version la plus récente l'emporte, les favoris s'additionnent.
+    for (const f of b.foods) {
+      const l = await db.foods.get(f.key)
+      if (!l || f.updatedAt > l.updatedAt) await db.foods.put({ ...f, favorite: f.favorite || !!l?.favorite, useCount: Math.max(f.useCount, l?.useCount ?? 0) })
+      else if (f.favorite && !l.favorite) await db.foods.put({ ...l, favorite: true })
+    }
+    for (const m of b.foodMemory) {
+      const l = await db.foodMemory.get(m.nameKey)
+      if (!l || m.updatedAt > l.updatedAt) await db.foodMemory.put(m)
+    }
     const localProfile = await getProfile()
     if (Object.values(localProfile).every((v) => !v)) await db.settings.put({ key: 'profile', value: b.profile })
   })

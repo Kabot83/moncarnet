@@ -12,7 +12,7 @@ Carnet de recettes personnel pour Android (PWA installable), hors ligne, sans co
 - **Collections** personnalisables (couverture, ordre), **liste de courses** multi-recettes (portions, ajustements en cours, regroupement, addition des unités compatibles seulement, rayons, partage texte).
 - **Import** : saisie manuelle avec brouillon automatique, lien (Schema.org/Recipe, via le proxy), photo et texte (Chef IA). Toujours un aperçu éditable avant enregistrement.
 - **Mon Chef IA** : conversation libre, idées de recettes, « Surprends-moi », amélioration d'une recette (sans jamais modifier l'original), remplacement d'ingrédient, exploitation du carnet (sélection locale, jamais tout le catalogue), profil culinaire, estimation nutritionnelle signalée comme telle.
-- **Nutrition** facultative, qui suit les quantités ajustées.
+- **Nutrition** : calories, protéines, glucides et lipides calculés ingrédient par ingrédient depuis la table **CIQUAL 2025** de l'ANSES (hors ligne) et **Open Food Facts** (produits de marque, code-barres) ; pour 100 g, par portion ou au total ; poids après cuisson ; indicateur de fiabilité ; suit les quantités ajustées. Voir [docs/NUTRITION.md](docs/NUTRITION.md).
 - **Sauvegarde ZIP** (JSON versionné + photos, sans aucun secret) et **restauration** contrôlée (format, version, SHA-256 des photos, doublons, aperçu, fusion ou remplacement).
 - Mode clair/sombre, interface 100 % française, pensée pour une main.
 
@@ -34,13 +34,13 @@ Ouvrir http://localhost:5173. Six recettes de démonstration (dont les crêpes d
 npm test
 ```
 
-103 tests unitaires (Vitest) : clavier, migration PWA → APK, calcul des proportions, unités et fractions, services de données, journal, collections, sessions, recherche sur 800 recettes, liste de courses, sauvegarde/restauration de 300 recettes et 150 photos (dont fichiers corrompus), import Schema.org, validation des réponses IA, quotas, proxy (authentification, routes, SSRF, robots.txt).
+131 tests unitaires (Vitest) : nutrition (données CIQUAL et Open Food Facts réelles), clavier, migration PWA → APK, calcul des proportions, unités et fractions, services de données, journal, collections, sessions, recherche sur 800 recettes, liste de courses, sauvegarde/restauration de 300 recettes et 150 photos (dont fichiers corrompus), import Schema.org, validation des réponses IA, quotas, proxy (authentification, routes, SSRF, robots.txt).
 
 ```bash
 npm run build && npm run test:e2e
 ```
 
-21 scénarios Playwright (dont 6 avec clavier ouvert/fermé) sur le build de production, format Pixel 7, avec le Chrome installé : navigation, crêpes 3 → 4 œufs, création/recherche/suppression, mode cuisine et bouton Retour, journal, courses, collections, export/restauration ZIP, **fonctionnement hors ligne**, et Chef IA avec l'API Gemini **simulée** (génération, « enregistre-la », erreur 429 sans nouvelle tentative, réponse invalide écartée, limite locale, import texte).
+30 scénarios Playwright (dont 6 avec clavier ouvert/fermé et 5 pour la nutrition) sur le build de production, format Pixel 7, avec le Chrome installé : navigation, crêpes 3 → 4 œufs, création/recherche/suppression, mode cuisine et bouton Retour, journal, courses, collections, export/restauration ZIP, **fonctionnement hors ligne**, et Chef IA avec l'API Gemini **simulée** (génération, « enregistre-la », erreur 429 sans nouvelle tentative, réponse invalide écartée, limite locale, import texte).
 
 ## Mettre en ligne et installer sur Android
 
@@ -84,7 +84,8 @@ src/
   lib/units.ts          Unités, fractions, arrondis d'affichage, incréments
   lib/search.ts         Recherche et filtres locaux, « À redécouvrir »
   lib/shopping.ts       Agrégation de la liste de courses
-  lib/nutrition.ts      Nutrition (interface prête pour CIQUAL / Open Food Facts)
+  nutrition/            Moteur de calcul (pur, testé), CIQUAL embarqué, Open Food Facts, aliments
+  data/ciqual-2025.json Table CIQUAL 2025 (générée par scripts/build-ciqual.mjs)
   db/                   Dexie (migrations versionnées), données de démonstration
   services/             Recettes, photos (compression, nettoyage), sessions et minuteries,
                         courses, brouillons, réglages/secrets, sauvegarde ZIP
@@ -100,7 +101,6 @@ Choix notable : pas de bibliothèque de composants externe ; les feuilles modale
 
 ## Reste à faire / limites connues
 
-- **Nutrition** : la table intégrée est indicative (≈ 25 aliments courants). L'intégration CIQUAL (licence Etalab) ou Open Food Facts (ODbL, attribution) se branche via `NutritionProvider` dans `src/lib/nutrition.ts`.
 - **Minuteries écran éteint** : en PWA, Android peut suspendre la page ; l'APK programme une vraie notification Android.
 - **Import par lien sans proxy** : la plupart des sites bloquent la lecture (CORS) ; l'app propose alors l'import par texte.
 - **Glisser-déposer** pour réordonner : remplacé par des boutons monter/descendre (plus fiables au doigt et accessibles).

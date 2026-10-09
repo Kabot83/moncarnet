@@ -37,7 +37,23 @@ export default function AboutPage() {
           <section>
             <h2 className="font-serif text-xl font-semibold">Informations nutritionnelles</h2>
             <p className="mt-2 text-muted">
-              Les valeurs calculées utilisent une table indicative de valeurs moyennes ; les estimations du Chef IA sont signalées comme telles. Pour des valeurs de référence, l’architecture prévoit l’intégration de la table CIQUAL (ANSES) ou d’Open Food Facts, dans le respect de leurs licences.
+              Les valeurs sont calculées ingrédient par ingrédient, à partir des aliments que vous associez vous-même : aucune association automatique, aucune valeur inventée. Une teneur inconnue n’est jamais comptée comme zéro ; le résultat est alors signalé « incomplet ». Les estimations du Chef IA restent présentées comme approximatives.
+            </p>
+            <h3 className="mt-4 font-semibold">Table CIQUAL 2025</h3>
+            <p className="text-muted">
+              Anses. 2025. Table de composition nutritionnelle des aliments Ciqual. Données du 3 novembre 2025 (3 484 aliments), intégrées sans modification et consultables hors ligne. Réutilisées selon la Licence Ouverte (Etalab).{' '}
+              <a className="text-terra underline-offset-2 hover:underline" href="https://ciqual.anses.fr/" target="_blank" rel="noopener noreferrer">
+                ciqual.anses.fr
+              </a>{' '}
+              · DOI 10.57745/RDMHWY
+            </p>
+            <h3 className="mt-4 font-semibold">Open Food Facts</h3>
+            <p className="text-muted">
+              Produits de marque issus de la base collaborative Open Food Facts, sous licence Open Database License (ODbL) ; © contributeurs Open Food Facts.{' '}
+              <a className="text-terra underline-offset-2 hover:underline" href="https://world.openfoodfacts.org/" target="_blank" rel="noopener noreferrer">
+                openfoodfacts.org
+              </a>
+              . Les produits choisis sont conservés sur ce téléphone.
             </p>
           </section>
         </div>
