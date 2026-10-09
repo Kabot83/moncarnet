@@ -1,0 +1,19 @@
+# Proxy Mon Carnet — Cloudflare Workers (offre gratuite suffisante pour un usage personnel).
+name = "mon-carnet-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[vars]
+# Origines autorisées (l'adresse où Mon Carnet est publié), séparées par des virgules.
+ALLOWED_ORIGINS = "https://VOTRE-PSEUDO.github.io,http://localhost:5173,http://localhost:4173"
+# Nombre maximal d'appels Gemini par jour relayés par le proxy (0 = pas de limite).
+DAILY_LIMIT = "200"
+# Respecter robots.txt pour l'import par lien.
+RESPECT_ROBOTS = "true"
+
+# Compteur quotidien persistant (facultatif) :
+#   npx wrangler kv namespace create USAGE
+# puis décommentez et collez l'identifiant :
+# [[kv_namespaces]]
+# binding = "USAGE"
+# id = "..."

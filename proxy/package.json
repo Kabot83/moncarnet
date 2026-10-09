@@ -1,0 +1,13 @@
+{
+  "name": "mon-carnet-proxy",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "secrets": "wrangler secret put GEMINI_API_KEY && wrangler secret put ACCESS_TOKEN"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

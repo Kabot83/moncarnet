@@ -1,0 +1,13 @@
+node_modules
+dist
+dev-dist
+coverage
+test-results
+playwright-report
+.env*
+!.env.example
+proxy/.dev.vars
+proxy/.wrangler
+test-results
+playwright-report
+.claude/settings.local.json

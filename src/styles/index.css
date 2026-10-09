@@ -1,0 +1,206 @@
+@import '@fontsource-variable/fraunces';
+@import '@fontsource-variable/inter';
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Palette « livre de cuisine » : crème, terracotta, sauge, anthracite. */
+:root {
+  --c-bg: #f7f2ea;
+  --c-paper: #fffdf9;
+  --c-sunken: #efe8dc;
+  --c-ink: #2b2926;
+  --c-muted: #6f6a63;
+  --c-faint: #9b958c;
+  --c-line: #e6ddcf;
+  --c-terra: #b85c38;
+  --c-terra-strong: #9d4a2a;
+  --c-terra-soft: #f3e1d6;
+  --c-sage: #6c7f5f;
+  --c-sage-soft: #e3e8da;
+  --c-gold: #c99a3b;
+  --c-danger: #b23a32;
+  --c-danger-soft: #f6dedb;
+  --c-shadow: 43 33 24;
+  color-scheme: light;
+}
+
+.dark {
+  --c-bg: #1b1916;
+  --c-paper: #252220;
+  --c-sunken: #151311;
+  --c-ink: #efe9df;
+  --c-muted: #b0a89c;
+  --c-faint: #81796f;
+  --c-line: #3a3530;
+  --c-terra: #e08a63;
+  --c-terra-strong: #eea07c;
+  --c-terra-soft: #3e2a20;
+  --c-sage: #a8ba98;
+  --c-sage-soft: #2b3226;
+  --c-gold: #e0b45a;
+  --c-danger: #ef7d73;
+  --c-danger-soft: #3d2220;
+  --c-shadow: 0 0 0;
+  color-scheme: dark;
+}
+
+@theme {
+  --color-bg: var(--c-bg);
+  --color-paper: var(--c-paper);
+  --color-sunken: var(--c-sunken);
+  --color-ink: var(--c-ink);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-line: var(--c-line);
+  --color-terra: var(--c-terra);
+  --color-terra-strong: var(--c-terra-strong);
+  --color-terra-soft: var(--c-terra-soft);
+  --color-sage: var(--c-sage);
+  --color-sage-soft: var(--c-sage-soft);
+  --color-gold: var(--c-gold);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+
+  --font-serif: 'Fraunces Variable', 'Iowan Old Style', Georgia, serif;
+  --font-sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --radius-card: 1.25rem;
+  --shadow-card: 0 1px 2px rgb(var(--c-shadow) / 0.06), 0 8px 24px -12px rgb(var(--c-shadow) / 0.18);
+  --shadow-float: 0 10px 30px -10px rgb(var(--c-shadow) / 0.35);
+
+  --animate-fade-up: fade-up 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  --animate-sheet-up: sheet-up 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-fade: fade 200ms ease-out both;
+  --animate-pop: pop 260ms cubic-bezier(0.3, 1.4, 0.5, 1) both;
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  @keyframes sheet-up {
+    from { transform: translateY(100%); }
+    to { transform: none; }
+  }
+  @keyframes fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes pop {
+    0% { transform: scale(0.9); }
+    100% { transform: scale(1); }
+  }
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+    background: var(--c-bg);
+  }
+  body {
+    margin: 0;
+    background: var(--c-bg);
+    color: var(--c-ink);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none;
+  }
+  h1, h2, h3, .font-serif {
+    font-family: var(--font-serif);
+    font-optical-sizing: auto;
+    letter-spacing: -0.01em;
+  }
+  :focus-visible {
+    outline: 2px solid var(--c-terra);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  button, [role='button'] {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  input, textarea, select {
+    font: inherit;
+    color: inherit;
+  }
+  ::selection {
+    background: var(--c-terra-soft);
+  }
+}
+
+@layer components {
+  .card {
+    background: var(--c-paper);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
+  }
+  .field {
+    width: 100%;
+    background: var(--c-paper);
+    border: 1px solid var(--c-line);
+    border-radius: 0.9rem;
+    padding: 0.75rem 0.9rem;
+    min-height: 3rem;
+    transition: border-color 150ms, box-shadow 150ms;
+  }
+  .field:focus {
+    outline: none;
+    border-color: var(--c-terra);
+    box-shadow: 0 0 0 3px var(--c-terra-soft);
+  }
+  .field::placeholder {
+    color: var(--c-faint);
+  }
+  .label {
+    display: block;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--c-muted);
+    margin-bottom: 0.35rem;
+    letter-spacing: 0.01em;
+  }
+  .eyebrow {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--c-terra);
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .safe-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* Écran de lancement (avant le chargement de React). */
+.splash {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--c-bg);
+}
+.splash span {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  color: var(--c-terra);
+  animation: fade 600ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
