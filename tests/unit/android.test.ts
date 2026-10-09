@@ -38,4 +38,16 @@ describe('plateforme', () => {
     const manifest = readFileSync('android/app/src/main/AndroidManifest.xml', 'utf-8')
     expect(manifest).toContain('android:screenOrientation="portrait"')
   })
+
+  it('aucune barre de titre native : thème de lancement sain et EdgeToEdge après Capacitor', () => {
+    const styles = readFileSync('android/app/src/main/res/values/styles.xml', 'utf-8')
+    // Un « android:background » dans un thème s'applique à toutes les vues (barre de titre étirée).
+    expect(styles).not.toMatch(/<item name="android:background">@drawable/)
+    const launch = styles.slice(styles.indexOf('name="AppTheme.NoActionBarLaunch"'))
+    expect(launch).toContain('<item name="android:windowNoTitle">true</item>')
+    expect(launch).toContain('<item name="android:windowActionBar">false</item>')
+    const main = readFileSync('android/app/src/main/java/fr/kabot83/moncarnet/MainActivity.java', 'utf-8')
+    expect(main.indexOf('super.onCreate(savedInstanceState)')).toBeGreaterThan(-1)
+    expect(main.indexOf('EdgeToEdge.enable(this)')).toBeGreaterThan(main.indexOf('super.onCreate(savedInstanceState)'))
+  })
 })

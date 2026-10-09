@@ -8,7 +8,7 @@ export default function AboutPage() {
         <div className="space-y-6 text-[15px] leading-relaxed">
           <section>
             <h1 className="font-serif text-3xl font-semibold">Mon Carnet</h1>
-            <p className="text-muted">Version 1.0.0 — votre livre de recettes personnel.</p>
+            <p className="text-muted">Version {__APP_VERSION__} — votre livre de recettes personnel.</p>
           </section>
           <section>
             <h2 className="font-serif text-xl font-semibold">Installer sur Android</h2>

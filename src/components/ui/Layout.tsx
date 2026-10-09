@@ -1,8 +1,25 @@
-import { ArrowLeft, ImageOff } from 'lucide-react'
+import { ArrowLeft, BookOpen, ImageOff } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePhotoUrl } from '@/hooks/usePhotoUrl'
 import { IconButton } from './Button'
+
+/**
+ * En-tête de l'application (accueil) : icône de livre terracotta + « Mon Carnet ».
+ * Même fond que la page (crème en clair, anthracite en sombre), 56 px de haut,
+ * sous la barre d'état (var(--sat) vaut 0 dans l'APK, qui place déjà la page dessous).
+ */
+export function AppHeader({ actions }: { actions?: ReactNode }) {
+  return (
+    <header className="sticky top-0 z-30 bg-bg pt-[var(--sat)]" data-app-header>
+      <div className="mx-auto flex h-14 max-w-3xl items-center gap-2.5 px-4">
+        <BookOpen size={22} strokeWidth={1.75} className="shrink-0 text-terra" aria-hidden="true" />
+        <span className="font-serif text-[1.15rem] leading-none font-semibold text-ink">Mon Carnet</span>
+        {actions && <div className="ml-auto flex items-center gap-1">{actions}</div>}
+      </div>
+    </header>
+  )
+}
 
 /** En-tête de page collant, avec retour. */
 export function TopBar({

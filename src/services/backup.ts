@@ -33,7 +33,7 @@ import { getProfile, getSettings, updateSettings } from './settings'
 
 export const BACKUP_FORMAT = 'mon-carnet-backup'
 export const BACKUP_VERSION = 1
-const APP_VERSION = '1.0.0'
+const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'
 
 /** Réglages exportables (aucun secret, rien de propre à l'appareil). */
 const EXPORTABLE_SETTINGS = [

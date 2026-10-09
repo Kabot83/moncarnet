@@ -6,7 +6,7 @@ import { RecipeCardMini } from '@/components/RecipeCard'
 import { CollectionTile } from '@/components/CollectionTile'
 import { AddRecipeSheet } from '@/components/BottomNav'
 import { Button } from '@/components/ui/Button'
-import { EmptyState, Page, SectionTitle } from '@/components/ui/Layout'
+import { AppHeader, EmptyState, Page, SectionTitle } from '@/components/ui/Layout'
 import { Skeleton } from '@/components/ui/Spinner'
 import { db } from '@/db/db'
 import { relativeDays } from '@/lib/format'
@@ -43,14 +43,16 @@ export default function HomePage() {
   const backupOld = settings.lastBackupAt == null || Date.now() - settings.lastBackupAt > 30 * 86_400_000
 
   return (
+    <>
+    <AppHeader />
     <Page>
-      <header className="pt-[calc(2rem+var(--sat))]">
+      <section aria-label="Bienvenue" className="pt-3">
         <p className="eyebrow">{new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())}</p>
         <h1 className="mt-1 font-serif text-[2.1rem] leading-[1.1] font-semibold">
           {greeting()},<br />
           <span className="text-terra italic">qu’est-ce qu’on cuisine&nbsp;?</span>
         </h1>
-      </header>
+      </section>
 
       <form
         role="search"
@@ -176,6 +178,7 @@ export default function HomePage() {
       )}
       <AddRecipeSheet open={addOpen} onClose={() => setAddOpen(false)} />
     </Page>
+    </>
   )
 }
 

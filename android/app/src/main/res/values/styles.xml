@@ -17,11 +17,18 @@
         <item name="android:windowLightStatusBar">@bool/mc_light_bars</item>
     </style>
 
-    <!-- Écran de lancement (Android 12+ : API SplashScreen ; avant : image splash). -->
+    <!--
+      Écran de lancement. L'image n'est posée QUE sur le fond de la fenêtre
+      (windowBackground) : un « android:background » dans un thème s'applique à
+      chaque vue, et étirait l'image dans une barre de titre native.
+      Aucune barre de titre ni barre d'action dans aucun thème de l'app.
+    -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/mc_background</item>
         <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher_foreground</item>
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
-        <item name="android:background">@drawable/splash</item>
+        <item name="android:windowBackground">@drawable/splash</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowActionBar">false</item>
     </style>
 </resources>

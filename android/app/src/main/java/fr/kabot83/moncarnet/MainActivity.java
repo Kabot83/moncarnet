@@ -30,8 +30,11 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(MonCarnetUiPlugin.class);
-        EdgeToEdge.enable(this);
         super.onCreate(savedInstanceState);
+        // APRÈS super.onCreate : Capacitor a appliqué le thème final (sans barre de titre)
+        // et créé la vue. Appelé avant, EdgeToEdge construisait la fenêtre avec le thème
+        // de lancement, qui affichait une barre de titre native « Mon Carnet ».
+        EdgeToEdge.enable(this);
 
         View root = getWindow().getDecorView();
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
@@ -42,6 +45,7 @@ public class MainActivity extends BridgeActivity {
             notifyKeyboard(keyboardOpen);
             return WindowInsetsCompat.CONSUMED;
         });
+        ViewCompat.requestApplyInsets(root);
     }
 
     @Override

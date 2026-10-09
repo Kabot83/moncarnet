@@ -1,7 +1,7 @@
 {
   "name": "mon-carnet",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Mon Carnet — carnet de recettes personnel, hors ligne, avec assistant culinaire Gemini.",
   "scripts": {
