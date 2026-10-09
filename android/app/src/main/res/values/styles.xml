@@ -13,6 +13,8 @@
         <item name="android:background">@null</item>
         <!-- Fond crème pendant le chargement de l'interface (pas d'éclair blanc). -->
         <item name="android:windowBackground">@color/mc_background</item>
+        <!-- Icônes de la barre d'état lisibles sur le fond crème (claires en mode sombre). -->
+        <item name="android:windowLightStatusBar">@bool/mc_light_bars</item>
     </style>
 
     <!-- Écran de lancement (Android 12+ : API SplashScreen ; avant : image splash). -->

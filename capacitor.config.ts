@@ -22,7 +22,10 @@ const config: CapacitorConfig = {
     hostname: 'localhost',
   },
   plugins: {
-    SystemBars: { insetsHandling: 'css', initialViewportFitValueHint: 'cover' },
+    // Zones système et clavier gérés une seule fois, côté natif (MainActivity.java) :
+    // la WebView est placée entre les barres (ou au-dessus du clavier) et ne reçoit
+    // aucun encart à appliquer elle-même. D'où « disable » ici.
+    SystemBars: { insetsHandling: 'disable' },
     LocalNotifications: { smallIcon: 'ic_stat_moncarnet', iconColor: '#B85C38' },
   },
 }

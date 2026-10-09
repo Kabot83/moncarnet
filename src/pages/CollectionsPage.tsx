@@ -28,7 +28,7 @@ export default function CollectionsPage() {
 
   return (
     <>
-      <header className="safe-top mx-auto flex max-w-5xl items-end gap-2 px-4 pt-8 pb-2">
+      <header className="mx-auto flex max-w-5xl items-end gap-2 px-4 pt-[calc(2rem+var(--sat))] pb-2">
         <div className="flex-1">
           <p className="eyebrow">Ranger, retrouver</p>
           <h1 className="mt-1 font-serif text-[2rem] font-semibold">Collections</h1>

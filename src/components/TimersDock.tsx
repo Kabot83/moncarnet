@@ -148,7 +148,7 @@ export function TimersDock() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`fixed left-4 bottom-[calc(5.6rem+var(--sab))] z-30 flex h-12 items-center gap-2 rounded-full px-4 font-semibold shadow-[var(--shadow-float)] animate-fade-up ${
+        className={`hide-on-keyboard above-nav fixed left-4 z-30 flex h-12 items-center gap-2 rounded-full px-4 font-semibold shadow-[var(--shadow-float)] animate-fade-up ${
           doneCount ? 'bg-terra text-white dark:text-[#1b1916]' : 'bg-ink text-bg'
         }`}
         aria-label={`${timers.length} minuterie(s). Ouvrir`}

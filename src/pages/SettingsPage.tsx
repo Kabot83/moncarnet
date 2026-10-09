@@ -53,7 +53,7 @@ export default function SettingsPage() {
 
   return (
     <Page>
-      <header className="safe-top pt-8">
+      <header className="pt-[calc(2rem+var(--sat))]">
         <p className="eyebrow">Mon Carnet</p>
         <h1 className="mt-1 font-serif text-[2rem] font-semibold">Réglages</h1>
       </header>

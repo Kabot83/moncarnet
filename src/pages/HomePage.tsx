@@ -44,7 +44,7 @@ export default function HomePage() {
 
   return (
     <Page>
-      <header className="safe-top pt-8">
+      <header className="pt-[calc(2rem+var(--sat))]">
         <p className="eyebrow">{new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date())}</p>
         <h1 className="mt-1 font-serif text-[2.1rem] leading-[1.1] font-semibold">
           {greeting()},<br />

@@ -34,13 +34,13 @@ Ouvrir http://localhost:5173. Six recettes de démonstration (dont les crêpes d
 npm test
 ```
 
-101 tests unitaires (Vitest) : migration PWA → APK, calcul des proportions, unités et fractions, services de données, journal, collections, sessions, recherche sur 800 recettes, liste de courses, sauvegarde/restauration de 300 recettes et 150 photos (dont fichiers corrompus), import Schema.org, validation des réponses IA, quotas, proxy (authentification, routes, SSRF, robots.txt).
+103 tests unitaires (Vitest) : clavier, migration PWA → APK, calcul des proportions, unités et fractions, services de données, journal, collections, sessions, recherche sur 800 recettes, liste de courses, sauvegarde/restauration de 300 recettes et 150 photos (dont fichiers corrompus), import Schema.org, validation des réponses IA, quotas, proxy (authentification, routes, SSRF, robots.txt).
 
 ```bash
 npm run build && npm run test:e2e
 ```
 
-15 scénarios Playwright sur le build de production, format Pixel 7, avec le Chrome installé : navigation, crêpes 3 → 4 œufs, création/recherche/suppression, mode cuisine et bouton Retour, journal, courses, collections, export/restauration ZIP, **fonctionnement hors ligne**, et Chef IA avec l'API Gemini **simulée** (génération, « enregistre-la », erreur 429 sans nouvelle tentative, réponse invalide écartée, limite locale, import texte).
+21 scénarios Playwright (dont 6 avec clavier ouvert/fermé) sur le build de production, format Pixel 7, avec le Chrome installé : navigation, crêpes 3 → 4 œufs, création/recherche/suppression, mode cuisine et bouton Retour, journal, courses, collections, export/restauration ZIP, **fonctionnement hors ligne**, et Chef IA avec l'API Gemini **simulée** (génération, « enregistre-la », erreur 429 sans nouvelle tentative, réponse invalide écartée, limite locale, import texte).
 
 ## Mettre en ligne et installer sur Android
 
@@ -73,7 +73,7 @@ Les recettes sont stockées **uniquement sur le téléphone** (IndexedDB). Elles
 
 ## Application Android (APK)
 
-Mon Carnet existe aussi en application Android installable hors Play Store (Capacitor 8, identifiant `fr.kabot83.moncarnet`). L'APK est compilé automatiquement par GitHub Actions à chaque envoi et publié dans la pré-version [android-test](https://github.com/Kabot83/moncarnet/releases/tag/android-test). Installation, transfert du carnet depuis la PWA, APK debug ou release et mises à jour sans perte : voir [docs/ANDROID.md](docs/ANDROID.md).
+Mon Carnet existe aussi en application Android installable hors Play Store (Capacitor 8, identifiant `fr.kabot83.moncarnet`). L'APK est compilé automatiquement par GitHub Actions à chaque envoi et signé avec une clé permanente et publié dans la version [android](https://github.com/Kabot83/moncarnet/releases/tag/android). Installation, transfert du carnet depuis la PWA, APK debug ou release et mises à jour sans perte : voir [docs/ANDROID.md](docs/ANDROID.md).
 
 ## Architecture
 

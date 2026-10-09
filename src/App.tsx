@@ -10,6 +10,7 @@ import { findUrl } from './importers/url'
 import { collectOrphanPhotos } from './services/photos'
 import { getSettings, updateSettings, useSettings } from './services/settings'
 import { initNative, setSystemBarsDark } from './platform/native'
+import { initKeyboard } from './platform/keyboard'
 import HomePage from './pages/HomePage'
 import RecipesPage from './pages/RecipesPage'
 import RecipePage from './pages/RecipePage'
@@ -34,6 +35,7 @@ let boot: Promise<void> | null = null
 function bootstrap() {
   boot ??= (async () => {
     void initNative()
+    initKeyboard()
     const s = await getSettings()
     if (!s.demoSeeded) {
       await updateSettings({ demoSeeded: true })

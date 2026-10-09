@@ -4,12 +4,14 @@ L'application Android est la même que la PWA, emballée avec Capacitor 8 : mêm
 
 ## Récupérer et installer l'APK depuis le téléphone
 
-1. Sur le téléphone, ouvrir **https://github.com/Kabot83/moncarnet/releases/tag/android-test**.
-2. Dans « Assets », toucher **MonCarnet-…-test.apk** (ou **MonCarnet-….apk** sans « test » quand la clé permanente sera en place). Le téléchargement démarre.
+1. Sur le téléphone, ouvrir **https://github.com/Kabot83/moncarnet/releases/tag/android**.
+2. Dans « Assets », toucher **MonCarnet-1.0.0-….apk**. Le téléchargement démarre.
 3. Ouvrir le fichier téléchargé. La première fois, Android demande d'autoriser l'installation depuis ce navigateur : **Paramètres → Autoriser depuis cette source**, puis revenir et toucher **Installer**.
 4. Samsung peut afficher un avertissement Play Protect (« application inconnue ») : choisir **Plus de détails → Installer quand même**. C'est normal pour une application personnelle hors Play Store.
 
-Autre voie : onglet **Actions** du dépôt → dernière exécution « APK Android » → section **Artifacts**. L'artefact est un ZIP contenant l'APK (il faut être connecté à GitHub et décompresser avec « Mes fichiers »).
+Les versions suivantes s'installent de la même façon, **par-dessus** la précédente : le carnet est conservé.
+
+Autre voie : onglet **Actions** du dépôt → dernière exécution « APK Android » → section **Artifacts** (ZIP contenant l'APK release et un APK « debug » de diagnostic, qu'il ne faut pas installer).
 
 ## Transférer son carnet de la PWA vers l'APK
 
@@ -39,45 +41,50 @@ Le Chef IA fonctionne de la même façon. Avec le proxy, ajouter `https://localh
 
 ## APK debug ou release ?
 
-- **Debug (« -test.apk »)** : signé avec une clé de débogage générée par GitHub. Parfait pour essayer. Cette clé est conservée dans le cache de GitHub Actions, mais **le cache est effacé après 7 jours sans compilation**. Une nouvelle clé produit une signature différente : Android refuse alors d'installer la mise à jour par-dessus (« conflit avec un package existant »), et il faut désinstaller, ce qui **efface le carnet de l'APK**.
-- **Release** : signé avec **votre clé permanente**. Toutes les versions futures portent la même signature et s'installent par-dessus les précédentes, données conservées. C'est la voie à suivre pour un usage quotidien.
+- **Debug** : signé avec une clé de débogage jetable, générée par la machine de compilation. Utile au diagnostic, mais deux APK debug compilés à des moments différents peuvent avoir des signatures différentes : Android refuse alors la mise à jour et impose une désinstallation (qui efface le carnet). Il n'est plus publié, seulement conservé dans les artefacts.
+- **Release** : signé avec **la clé permanente de Mon Carnet**. Toutes les versions portent la même signature et s'installent par-dessus les précédentes, données conservées. C'est la version publiée.
 
-Tant que la clé permanente n'existe pas : **faire une sauvegarde ZIP avant chaque nouvelle installation**.
+À chaque compilation, la CI vérifie que l'APK release porte bien l'empreinte de la clé permanente (`8025cb7c…df527639`) et que son numéro de version augmente ; sinon elle échoue au lieu de publier un APK impossible à installer en mise à jour.
+
+## Passage de l'APK de test à la version définitive (une seule fois)
+
+L'APK de test installé avant octobre 2026 est signé avec une autre clé : Android refusera d'installer la version définitive par-dessus (« Conflit avec un package existant »).
+
+1. Dans l'APK de test : Réglages → Sauvegarde → **Sauvegarder mon carnet** (le fichier va dans Documents/MonCarnet).
+2. Désinstaller l'APK de test (appui long sur l'icône → Désinstaller).
+3. Installer l'APK définitif depuis la page « android ».
+4. Réglages → Sauvegarde → **Restaurer mon carnet** → choisir le fichier → **Tout remplacer**.
+
+Ensuite, plus jamais de désinstallation : chaque nouvelle version s'installe par-dessus.
 
 ## Mises à jour sans perte de données
 
 Une mise à jour conserve le carnet si et seulement si :
 
 1. **même identifiant** `fr.kabot83.moncarnet` (fixé, ne jamais le changer) ;
-2. **même signature** (d'où la clé permanente) ;
-3. **versionCode supérieur** : calculé automatiquement par la CI (minutes écoulées depuis le 1er janvier 2026), donc toujours croissant ;
+2. **même signature** : la clé permanente (vérifiée automatiquement par la CI) ;
+3. **versionCode supérieur** : calculé automatiquement (minutes écoulées depuis le 1er janvier 2026) et vérifié par la CI ;
 4. **même origine web** `https://localhost` (fixée dans `capacitor.config.ts` : IndexedDB y est rattaché ; ne jamais modifier `hostname` ni `androidScheme`).
 
 Les évolutions de la base passent par les migrations Dexie (`src/db/db.ts`), appliquées automatiquement au premier lancement de la nouvelle version.
 
-## Créer la clé permanente (à faire une seule fois, avec votre accord)
+## La clé permanente
 
-La clé est un fichier `.jks` protégé par un mot de passe. **Si elle est perdue, plus aucune mise à jour n'est possible sans réinstallation** : la conserver précieusement (gestionnaire de mots de passe + copie hors ligne). Elle ne doit **jamais** être envoyée dans le dépôt.
+Elle a été générée sur le PC (RSA 4096 bits, certificat valable 100 ans) et se trouve dans **`Documents\MonCarnet-signature`** :
 
-1. Générer la clé (Java 17+ requis, une fois) :
+- `moncarnet-release.p12` : la clé (format PKCS#12) ;
+- `A-CONSERVER-mots-de-passe.txt` : alias, mot de passe et empreinte.
 
-   ```bash
-   keytool -genkeypair -v -keystore moncarnet-release.jks -alias moncarnet -keyalg RSA -keysize 4096 -validity 36500
-   ```
+Elle est aussi enregistrée, **chiffrée**, dans les secrets GitHub Actions du dépôt (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`). GitHub ne permet jamais de relire un secret : **la copie du PC est la seule récupérable**.
 
-2. Encoder le fichier pour GitHub :
+Pour la conserver :
 
-   ```bash
-   base64 -w0 moncarnet-release.jks > moncarnet-release.b64
-   ```
+1. Copier le mot de passe du fichier texte dans un gestionnaire de mots de passe (Bitwarden, Samsung Pass, etc.).
+2. Copier `moncarnet-release.p12` sur au moins un support hors du PC (clé USB rangée, coffre-fort numérique chiffré). Le fichier seul est inutilisable sans le mot de passe.
+3. Supprimer ensuite le fichier texte du PC.
+4. Ne jamais déposer ces fichiers sur GitHub, dans un e-mail ou une messagerie non chiffrée.
 
-3. Sur GitHub : **Settings → Secrets and variables → Actions → New repository secret**, créer :
-   - `ANDROID_KEYSTORE_BASE64` : contenu de `moncarnet-release.b64` ;
-   - `ANDROID_KEYSTORE_PASSWORD` : mot de passe du fichier ;
-   - `ANDROID_KEY_ALIAS` : `moncarnet` ;
-   - `ANDROID_KEY_PASSWORD` : mot de passe de la clé.
-4. Supprimer `moncarnet-release.b64`. Relancer le workflow (Actions → APK Android → Run workflow) : un `MonCarnet-….apk` signé apparaît à côté de l'APK de test.
-5. Passage debug → release : les signatures diffèrent, il faut **une dernière fois** sauvegarder le carnet, désinstaller l'APK de test, installer l'APK release, restaurer.
+Si la clé était perdue, l'application continuerait de fonctionner, mais les mises à jour imposeraient une désinstallation (donc une restauration depuis une sauvegarde ZIP).
 
 ## Développement
 

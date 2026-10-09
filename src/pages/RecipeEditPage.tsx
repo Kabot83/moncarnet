@@ -283,7 +283,7 @@ export default function RecipeEditPage() {
         </section>
       </main>
 
-      <div className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line/70 bg-bg/95 backdrop-blur">
+      <div className="hide-on-keyboard safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line/70 bg-bg/95 backdrop-blur">
         <div className="mx-auto flex max-w-2xl gap-3 px-4 py-3">
           <Button variant="secondary" onClick={() => void cancel()}>
             Annuler

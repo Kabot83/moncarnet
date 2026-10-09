@@ -23,7 +23,7 @@ function PwaUpdatePrompt() {
   }, [offlineReady, setOfflineReady])
   if (!needRefresh && !offlineReady) return null
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(5.5rem+var(--sab))] z-[65] flex justify-center px-4" role="status">
+    <div className="hide-on-keyboard above-nav pointer-events-none fixed inset-x-0 z-[65] flex justify-center px-4" role="status">
       <div className="pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl bg-ink px-4 py-3 text-sm text-bg shadow-[var(--shadow-float)] animate-fade-up">
         <span className="flex-1">
           {needRefresh ? 'Une nouvelle version de Mon Carnet est prête.' : 'Mon Carnet fonctionne désormais hors ligne.'}

@@ -4,7 +4,10 @@
  *
  * Les plugins natifs sont chargés à la demande : la PWA ne les télécharge jamais.
  */
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
+
+/** Plugin natif de l'app (android/…/MonCarnetUiPlugin.java). */
+const MonCarnetUi = registerPlugin<{ setTheme(o: { dark: boolean; color: string }): Promise<void> }>('MonCarnetUi')
 
 export const isNative = Capacitor.isNativePlatform()
 export const platform = Capacitor.getPlatform() as 'web' | 'android' | 'ios'
@@ -33,12 +36,11 @@ export async function initNative(): Promise<void> {
   })
 }
 
-/** Couleur des icônes de la barre d'état selon le thème. */
+/** Barres système accordées au thème : même fond que l'app, icônes contrastées. */
 export async function setSystemBarsDark(dark: boolean): Promise<void> {
   if (!isNative) return
   try {
-    const { SystemBars, SystemBarsStyle } = await import('@capacitor/core')
-    await SystemBars.setStyle({ style: dark ? SystemBarsStyle.Dark : SystemBarsStyle.Light })
+    await MonCarnetUi.setTheme({ dark, color: dark ? '#1B1916' : '#F7F2EA' })
   } catch {
     /* sans effet */
   }

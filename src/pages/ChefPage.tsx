@@ -235,7 +235,7 @@ export default function ChefPage() {
         <div ref={bottomRef} />
       </main>
 
-      <div className="safe-bottom fixed inset-x-0 bottom-[calc(4.25rem+var(--sab))] z-30 bg-gradient-to-t from-bg via-bg to-bg/0 pt-6">
+      <div className="fixed inset-x-0 bottom-[var(--nav-h)] z-30 bg-gradient-to-t from-bg via-bg to-bg/0 pt-6">
         <div className="mx-auto max-w-2xl px-4 pb-3">
           {!online && (
             <p className="mb-2 flex items-center gap-2 rounded-xl bg-sunken px-3 py-2 text-sm text-muted">

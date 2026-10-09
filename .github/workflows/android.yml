@@ -1,14 +1,12 @@
 name: APK Android
 
 # Compile l'application Android dans le cloud GitHub (aucun Android Studio nécessaire).
-# Résultat : un APK installable, disponible
-#   - dans les « Artifacts » de chaque exécution (onglet Actions),
-#   - dans la pré-version « android-test » (onglet Releases), pratique depuis un téléphone.
-#
-# Signature :
-#   - Sans secrets : APK « debug » de test, signé avec une clé de débogage conservée en cache.
-#   - Avec les secrets ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
-#     ANDROID_KEY_PASSWORD : APK « release » signé avec votre clé permanente (voir docs/ANDROID.md).
+# Résultat :
+#   - APK « release » signé avec la clé permanente (secrets ANDROID_KEYSTORE_BASE64,
+#     ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD), publié dans la
+#     version « android » (onglet Releases) : c'est celui à installer sur le téléphone ;
+#   - APK « debug » de diagnostic, uniquement dans les « Artifacts » de l'exécution.
+# Chaque APK release est vérifié : même signature qu'avant, numéro de version supérieur.
 
 on:
   push:
@@ -16,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # publication de la pré-version « android-test »
+  contents: write # publication de la version « android » (onglet Releases)
 
 concurrency:
   group: android-apk
@@ -28,6 +26,10 @@ jobs:
     timeout-minutes: 30
     env:
       HAS_RELEASE_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      # Empreinte SHA-256 (publique) du certificat de la clé permanente de Mon Carnet.
+      # Si une compilation produisait une autre signature, elle échouerait au lieu de publier
+      # un APK impossible à installer par-dessus le précédent.
+      EXPECTED_CERT_SHA256: 8025cb7c79521d87b5ad978e1ac5f2d1633ee46dcc196da864078178df527639
 
     steps:
       - name: Recuperer le code
@@ -102,30 +104,54 @@ jobs:
           ./gradlew --no-daemon assembleRelease -PversionCode="$VERSION_CODE" -PversionName="$VERSION_NAME"
           rm -f "$MC_KEYSTORE_FILE"
 
+      - name: Verifier la signature et la version
+        if: env.HAS_RELEASE_KEY == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$APKSIGNER" verify --verbose "$APK" | grep -E "Verified using v2 scheme|Verified using v3 scheme"
+          CERT=$("$APKSIGNER" verify --print-certs "$APK" | grep -m1 "certificate SHA-256 digest" | awk '{print $NF}')
+          echo "Empreinte du certificat : $CERT"
+          if [ "$CERT" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::Signature inattendue : cet APK ne pourrait pas remplacer la version installée."
+            exit 1
+          fi
+          PREV=$(gh release view android --json assets --jq '.assets[].name' 2>/dev/null | sed -n 's/^MonCarnet-.*-\([0-9]\+\)\.apk$/\1/p' | head -1)
+          echo "Version précédente : ${PREV:-aucune} ; nouvelle : $VERSION_CODE"
+          if [ -n "$PREV" ] && [ "$VERSION_CODE" -le "$PREV" ]; then
+            echo "::error::Le numéro de version doit augmenter pour une mise à jour sans désinstallation."
+            exit 1
+          fi
+
       - name: Renommer les APK
         run: |
-          mkdir -p apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk "apk/MonCarnet-${VERSION_NAME}-${VERSION_CODE}-test.apk"
+          mkdir -p apk release
+          cp android/app/build/outputs/apk/debug/app-debug.apk "apk/MonCarnet-${VERSION_NAME}-${VERSION_CODE}-debug.apk"
           if [ -f android/app/build/outputs/apk/release/app-release.apk ]; then
-            cp android/app/build/outputs/apk/release/app-release.apk "apk/MonCarnet-${VERSION_NAME}-${VERSION_CODE}.apk"
+            cp android/app/build/outputs/apk/release/app-release.apk "release/MonCarnet-${VERSION_NAME}-${VERSION_CODE}.apk"
+            cp release/*.apk apk/
           fi
           ls -la apk
 
-      - name: Mettre l'APK dans les artefacts
+      - name: Mettre les APK dans les artefacts
         uses: actions/upload-artifact@v7
         with:
           name: MonCarnet-${{ env.VERSION_NAME }}-${{ env.VERSION_CODE }}
           path: apk/*.apk
           retention-days: 30
 
-      - name: Publier la pre-version android-test
-        if: github.ref == 'refs/heads/master'
+      - name: Publier la version Android
+        if: github.ref == 'refs/heads/master' && env.HAS_RELEASE_KEY == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Ancienne pré-version de test (APK debug, autre signature) : retirée pour éviter toute confusion.
           gh release delete android-test --yes --cleanup-tag || true
-          gh release create android-test apk/*.apk \
-            --prerelease \
+          gh release delete android --yes --cleanup-tag || true
+          gh release create android release/*.apk \
+            --latest \
             --target "$GITHUB_SHA" \
-            --title "Mon Carnet Android — dernière version de test" \
-            --notes "APK compilé automatiquement le $(date -u '+%d/%m/%Y à %H:%M') UTC (version ${VERSION_NAME}, code ${VERSION_CODE}). Avant d’installer une nouvelle version : Réglages → Sauvegarde → Sauvegarder mon carnet."
+            --title "Mon Carnet pour Android" \
+            --notes "APK signé avec la clé permanente de Mon Carnet, compilé le $(date -u '+%d/%m/%Y à %H:%M') UTC (version ${VERSION_NAME}, code ${VERSION_CODE}). Il s’installe par-dessus la version précédente, données conservées. Empreinte du certificat : ${EXPECTED_CERT_SHA256}"

@@ -6,9 +6,15 @@
 
 /* Palette « livre de cuisine » : crème, terracotta, sauge, anthracite. */
 :root {
-  /* Zones système : env() dans le navigateur, variables injectées par Capacitor sur Android. */
-  --sat: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
-  --sab: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  /*
+   * Zones système. Navigateur : env(). Application Android : 0, car la vue native
+   * place déjà la page entre la barre d'état et la barre de navigation (ou le
+   * clavier) — aucune marge n'est donc appliquée deux fois.
+   */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  /* Hauteur occupée par la navigation inférieure (0 quand le clavier est ouvert). */
+  --nav-h: calc(4.25rem + var(--sab));
   --c-bg: #f7f2ea;
   --c-paper: #fffdf9;
   --c-sunken: #efe8dc;
@@ -184,6 +190,21 @@
   .safe-top {
     padding-top: var(--sat);
   }
+  /* Éléments ancrés au-dessus de la navigation inférieure. */
+  .above-nav {
+    bottom: calc(var(--nav-h) + var(--above-nav-gap, 1rem));
+  }
+}
+
+/*
+ * Clavier ouvert : la navigation inférieure et les boutons flottants laissent
+ * la place à la saisie, puis reviennent à la fermeture du clavier.
+ */
+html[data-keyboard='open'] {
+  --nav-h: 0px;
+}
+html[data-keyboard='open'] .hide-on-keyboard {
+  display: none !important;
 }
 
 /* Écran de lancement (avant le chargement de React). */

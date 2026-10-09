@@ -103,7 +103,7 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
         </Sheet>
         {createPortal(
           <div
-            className="pointer-events-none fixed inset-x-0 bottom-[calc(5.5rem+var(--sab))] z-[60] flex flex-col items-center gap-2 px-4"
+            className="above-nav pointer-events-none fixed inset-x-0 z-[60] flex flex-col items-center gap-2 px-4"
             aria-live="polite"
             role="status"
           >

@@ -167,7 +167,7 @@ export default function CookModePage() {
         )}
       </main>
 
-      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-20 border-t border-line/70 bg-bg/95 backdrop-blur" aria-label="Navigation des étapes">
+      <nav className="hide-on-keyboard safe-bottom fixed inset-x-0 bottom-0 z-20 border-t border-line/70 bg-bg/95 backdrop-blur" aria-label="Navigation des étapes">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
           <IconButton label="Étape précédente" size="lg" tone="paper" disabled={current === 0} onClick={() => go(current - 1)} className="!size-16">
             <ChevronLeft size={30} />

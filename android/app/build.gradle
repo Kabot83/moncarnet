@@ -29,6 +29,7 @@ android {
         if (mcKeystore) {
             release {
                 storeFile file(mcKeystore)
+                storeType System.getenv('MC_KEYSTORE_TYPE') ?: 'pkcs12'
                 storePassword System.getenv('MC_KEYSTORE_PASSWORD')
                 keyAlias System.getenv('MC_KEY_ALIAS')
                 keyPassword System.getenv('MC_KEY_PASSWORD')

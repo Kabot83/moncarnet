@@ -191,7 +191,7 @@ export default function RecipesPage() {
       </Page>
 
       {selecting && (
-        <div className="fixed inset-x-0 bottom-[calc(4.6rem+var(--sab))] z-40 flex justify-center px-4 animate-fade-up">
+        <div className="hide-on-keyboard above-nav fixed inset-x-0 z-40 flex justify-center px-4 animate-fade-up">
           <Button size="lg" className="w-full max-w-md shadow-[var(--shadow-float)]" disabled={!selected.length} onClick={() => setBuilderOpen(true)}>
             Ajouter à la liste de courses
           </Button>

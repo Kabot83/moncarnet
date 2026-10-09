@@ -26,7 +26,7 @@ export function BottomNav() {
           type="button"
           onClick={() => setAddOpen(true)}
           aria-label="Ajouter une recette"
-          className="fixed right-4 bottom-[calc(5.25rem+var(--sab))] z-30 grid size-15 place-items-center rounded-full bg-terra text-white shadow-[var(--shadow-float)] transition-transform active:scale-95 dark:text-[#1b1916]"
+          className="hide-on-keyboard above-nav fixed right-4 z-30 grid size-15 place-items-center rounded-full bg-terra text-white shadow-[var(--shadow-float)] transition-transform active:scale-95 dark:text-[#1b1916]"
           style={{ width: '3.75rem', height: '3.75rem' }}
         >
           <Plus size={28} strokeWidth={2} />
@@ -34,7 +34,7 @@ export function BottomNav() {
       )}
       <nav
         aria-label="Navigation principale"
-        className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line/70 bg-bg/92 backdrop-blur-xl"
+        className="hide-on-keyboard safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line/70 bg-bg/92 backdrop-blur-xl"
       >
         <ul className="mx-auto grid h-[4.25rem] max-w-xl grid-cols-5">
           {TABS.map(({ to, label, icon: Icon, end }) => (
