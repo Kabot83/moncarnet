@@ -125,6 +125,7 @@ export async function referencedPhotoIds(): Promise<Set<string>> {
   })
   await db.journal.each((j) => j.photoId && used.add(j.photoId))
   await db.collections.each((c) => c.coverPhotoId && used.add(c.coverPhotoId))
+  await db.posts.each((p) => p.thumbnailPhotoId && used.add(p.thumbnailPhotoId))
   await db.drafts.each((d) => {
     const r = d.data
     if (r.mainPhotoId) used.add(r.mainPhotoId)

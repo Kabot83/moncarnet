@@ -17,6 +17,7 @@ import type {
   Photo,
   Recipe,
   ShoppingItem,
+  SocialPost,
   Timer,
 } from '@/models/types'
 
@@ -53,7 +54,7 @@ export interface FoodMemory {
 }
 
 export const DB_NAME = 'mon-carnet'
-export const DB_VERSION = 3
+export const DB_VERSION = 4
 
 export class CarnetDB extends Dexie {
   recipes!: Table<Recipe, string>
@@ -71,6 +72,8 @@ export class CarnetDB extends Dexie {
   aiUsage!: Table<AiUsageRow, string>
   foods!: Table<FoodEntry, string>
   foodMemory!: Table<FoodMemory, string>
+  /** Publications TikTok / Instagram enregistrées (« À essayer »). */
+  posts!: Table<SocialPost, string>
 
   constructor(name = DB_NAME) {
     super(name)
@@ -120,6 +123,21 @@ export class CarnetDB extends Dexie {
               i.nutrition ??= null
               i.nutritionExcluded ??= false
             })
+          })
+      })
+    // v4 : bibliothèque « À essayer » (TikTok, Instagram). Nouvelle table ; les recettes
+    // reçoivent seulement le lien (vide) vers leur publication source.
+    this.version(4)
+      .stores({
+        posts: 'id, &dedupeKey, platform, status, createdAt, updatedAt, recipeId, *tags',
+        recipes: 'id, title, category, updatedAt, createdAt, favorite, toTry, lastCookedAt, isDemo, rating, cookCount, sourcePostId, *tags',
+      })
+      .upgrade(async (tx) => {
+        await tx
+          .table('recipes')
+          .toCollection()
+          .modify((r: Partial<Recipe>) => {
+            r.sourcePostId ??= null
           })
       })
   }

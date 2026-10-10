@@ -1,4 +1,4 @@
-import { BookOpen, Camera, ChefHat, FileText, Home, Library, Link2, PenLine, Plus, Settings } from 'lucide-react'
+import { BookOpen, Camera, ChefHat, Clapperboard, FileText, Home, Library, Link2, PenLine, Plus, Settings } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useSafeNavigate } from '@/hooks/useOverlayHistory'
@@ -6,7 +6,8 @@ import { Sheet } from './ui/Sheet'
 
 const TABS = [
   { to: '/', label: 'Accueil', icon: Home, end: true },
-  { to: '/recettes', label: 'Mes recettes', icon: BookOpen },
+  // « À essayer » (TikTok, Instagram) est un onglet de « Mes recettes ».
+  { to: '/recettes', label: 'Mes recettes', icon: BookOpen, also: /^\/a-essayer/ },
   { to: '/chef', label: 'Chef IA', icon: ChefHat },
   { to: '/collections', label: 'Collections', icon: Library },
   { to: '/reglages', label: 'Réglages', icon: Settings },
@@ -37,21 +38,21 @@ export function BottomNav() {
         className="hide-on-keyboard safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line/70 bg-bg/92 backdrop-blur-xl"
       >
         <ul className="mx-auto grid h-[4.25rem] max-w-xl grid-cols-5">
-          {TABS.map(({ to, label, icon: Icon, end }) => (
+          {TABS.map(({ to, label, icon: Icon, end, also }) => (
             <li key={to}>
               <NavLink
                 to={to}
                 end={end}
                 className={({ isActive }) =>
                   `flex h-full flex-col items-center justify-center gap-1 text-[11px] font-medium transition-colors ${
-                    isActive ? 'text-terra' : 'text-muted hover:text-ink'
+                    isActive || also?.test(location.pathname) ? 'text-terra' : 'text-muted hover:text-ink'
                   }`
                 }
               >
                 {({ isActive }) => (
                   <>
-                    <span className={`grid h-8 w-14 place-items-center rounded-full transition-colors ${isActive ? 'bg-terra-soft' : ''}`}>
-                      <Icon size={21} strokeWidth={isActive ? 2 : 1.6} />
+                    <span className={`grid h-8 w-14 place-items-center rounded-full transition-colors ${isActive || also?.test(location.pathname) ? 'bg-terra-soft' : ''}`}>
+                      <Icon size={21} strokeWidth={isActive || also?.test(location.pathname) ? 2 : 1.6} />
                     </span>
                     <span className="leading-none">{label}</span>
                   </>
@@ -68,6 +69,7 @@ export function BottomNav() {
 
 const ADD_MODES = [
   { to: '/recettes/nouvelle', icon: PenLine, title: 'Saisie manuelle', text: 'Remplir la fiche moi-même, à mon rythme.' },
+  { to: '/a-essayer?importer=1', icon: Clapperboard, title: 'Depuis TikTok ou Instagram', text: 'Garder une vidéo dans « À essayer ».' },
   { to: '/importer/lien', icon: Link2, title: 'Depuis un lien', text: 'Récupérer une recette publiée sur Internet.' },
   { to: '/importer/photo', icon: Camera, title: 'Depuis une photo', text: 'Photographier un livre ou une fiche (Chef IA).' },
   { to: '/importer/texte', icon: FileText, title: 'Depuis un texte', text: 'Coller une recette copiée (Chef IA).' },

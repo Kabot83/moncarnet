@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { RecipeCardMini } from '@/components/RecipeCard'
 import { CollectionTile } from '@/components/CollectionTile'
+import { PostCard } from '@/components/social/SocialUi'
 import { AddRecipeSheet } from '@/components/BottomNav'
 import { Button } from '@/components/ui/Button'
 import { AppHeader, EmptyState, Page, SectionTitle } from '@/components/ui/Layout'
@@ -29,6 +30,7 @@ export default function HomePage() {
   const navigate = useNavigate()
   const recipes = useLiveQuery(() => db.recipes.toArray(), [])
   const collections = useLiveQuery(() => db.collections.orderBy('order').toArray(), [])
+  const toTryPosts = useLiveQuery(() => db.posts.where('status').equals('toTry').reverse().sortBy('createdAt'), [])
   const shoppingCount = useLiveQuery(() => db.shopping.filter((i) => !i.checked).count(), [], 0)
   const settings = useSettings()
   const [query, setQuery] = useState('')
@@ -124,6 +126,21 @@ export default function HomePage() {
               <Rail>
                 {lastCooked.map((r) => (
                   <RecipeCardMini key={r.id} recipe={r} caption={relativeDays(r.lastCookedAt)} />
+                ))}
+              </Rail>
+            </section>
+          )}
+
+          {toTryPosts && toTryPosts.length > 0 && (
+            <section aria-labelledby="h-totry">
+              <SectionTitle id="h-totry" action={<SeeAll to="/a-essayer" />}>
+                À essayer
+              </SectionTitle>
+              <Rail>
+                {toTryPosts.slice(0, 10).map((p) => (
+                  <div key={p.id} className="w-36 shrink-0 snap-start">
+                    <PostCard post={p} onOpen={() => navigate(`/a-essayer/${p.id}`)} />
+                  </div>
                 ))}
               </Rail>
             </section>

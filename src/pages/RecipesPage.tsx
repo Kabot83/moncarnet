@@ -3,6 +3,7 @@ import { ArrowDownUp, BookOpen, LayoutGrid, List, ListChecks, Search, SlidersHor
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RecipeCardGrid, RecipeCardList } from '@/components/RecipeCard'
+import { RecipesTabs } from '@/components/social/SocialUi'
 import { ShoppingBuilder } from '@/components/ShoppingBuilder'
 import { Button, IconButton } from '@/components/ui/Button'
 import { Chip, Segmented, Switch } from '@/components/ui/Fields'
@@ -76,7 +77,8 @@ export default function RecipesPage() {
     <>
       <header className="safe-top sticky top-0 z-30 border-b border-line/60 bg-bg/92 backdrop-blur-lg">
         <div className="mx-auto max-w-5xl px-4 pt-3 pb-3">
-          <div className="flex items-center gap-2">
+          {!selecting && <RecipesTabs />}
+          <div className={`flex items-center gap-2 ${selecting ? '' : 'mt-3'}`}>
             <h1 className="flex-1 font-serif text-2xl font-semibold">{selecting ? `${selected.length} sélectionnée(s)` : 'Mes recettes'}</h1>
             {selecting ? (
               <Button

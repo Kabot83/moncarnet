@@ -4,4 +4,6 @@
     <string name="title_activity_main">Mon Carnet</string>
     <string name="package_name">fr.kabot83.moncarnet</string>
     <string name="custom_url_scheme">fr.kabot83.moncarnet</string>
+    <!-- Nom affiché dans le menu « Partager » d'Android. -->
+    <string name="share_label">Mon Carnet</string>
 </resources>

@@ -51,3 +51,20 @@ describe('plateforme', () => {
     expect(main.indexOf('EdgeToEdge.enable(this)')).toBeGreaterThan(main.indexOf('super.onCreate(savedInstanceState)'))
   })
 })
+
+describe('partage Android → Mon Carnet', () => {
+  it('cible de partage texte, file persistante, aucun partage perdu au démarrage', () => {
+    const manifest = readFileSync('android/app/src/main/AndroidManifest.xml', 'utf-8')
+    expect(manifest).toMatch(/<action android:name="android\.intent\.action\.SEND" \/>\s*<category android:name="android\.intent\.category\.DEFAULT" \/>\s*<data android:mimeType="text\/plain" \/>/)
+    expect(manifest).toContain('android:launchMode="singleTask"')
+    const main = readFileSync('android/app/src/main/java/fr/kabot83/moncarnet/MainActivity.java', 'utf-8')
+    // Mise en file AVANT super.onCreate (démarrage à froid) et dans onNewIntent (application ouverte).
+    expect(main.indexOf('consumeShareIntent(getIntent())')).toBeLessThan(main.indexOf('super.onCreate(savedInstanceState)'))
+    expect(main).toMatch(/onNewIntent[\s\S]*consumeShareIntent\(intent\)[\s\S]*notifyShare\(\)/)
+    expect(main).toContain('registerPlugin(ShareReceiverPlugin.class)')
+    const plugin = readFileSync('android/app/src/main/java/fr/kabot83/moncarnet/ShareReceiverPlugin.java', 'utf-8')
+    expect(plugin).toContain('.commit()') // écriture synchrone sur le disque
+    expect(plugin).toMatch(/notifyListeners\("shareReceived", new JSObject\(\), true\)/) // conservé si l'interface n'écoute pas encore
+    expect(plugin).toMatch(/public void ack\(/)
+  })
+})

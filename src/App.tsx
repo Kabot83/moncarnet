@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
 import { TimerEngine, TimersDock } from './components/TimersDock'
@@ -6,7 +6,9 @@ import { UpdatePrompt } from './components/UpdatePrompt'
 import { LoadingBlock } from './components/ui/Spinner'
 import { requestPersistentStorage } from './db/db'
 import { seedDemoData } from './db/seed'
-import { findUrl } from './importers/url'
+import { startShareReceiver } from './platform/shareReceiver'
+import { enrichPending } from './social/posts'
+import { processShare, routeForShare } from './social/share'
 import { collectOrphanPhotos } from './services/photos'
 import { getSettings, updateSettings, useSettings } from './services/settings'
 import { initNative, setSystemBarsDark } from './platform/native'
@@ -29,6 +31,8 @@ const ProfilePage = lazy(() => import('./pages/ProfilePage'))
 const BackupPage = lazy(() => import('./pages/BackupPage'))
 const ImportPage = lazy(() => import('./pages/ImportPage'))
 const AboutPage = lazy(() => import('./pages/AboutPage'))
+const SocialLibraryPage = lazy(() => import('./pages/SocialLibraryPage'))
+const SocialPostPage = lazy(() => import('./pages/SocialPostPage'))
 
 /** Démarrage unique (même si React monte deux fois en mode strict). */
 let boot: Promise<void> | null = null
@@ -75,16 +79,30 @@ export function App() {
     return () => mq.removeEventListener('change', apply)
   }, [settings.theme])
 
-  // Partage Android (« Partager → Mon Carnet ») : ouvre l'import par lien.
+  // Partages reçus : TikTok / Instagram → « À essayer » ; autre lien → import de recette ; texte → import par texte.
+  // - PWA (cible de partage du manifeste) : paramètres ?url=&text=&title= au lancement.
+  // - APK : file persistante du ShareReceiverPlugin (aucun partage perdu au démarrage).
+  const navigateRef = useRef(navigate)
+  navigateRef.current = navigate
   useEffect(() => {
+    if (!ready) return
     const params = new URLSearchParams(window.location.search)
-    const shared = params.get('url') || findUrl(`${params.get('text') ?? ''} ${params.get('title') ?? ''}`)
-    if (shared || params.get('text')) {
+    if (params.get('url') || params.get('text') || params.get('title')) {
       window.history.replaceState(null, '', window.location.pathname + window.location.hash)
-      if (shared) navigate(`/importer/lien?url=${encodeURIComponent(shared)}`)
-      else navigate(`/importer/texte?text=${encodeURIComponent(params.get('text') ?? '')}`)
+      void processShare({ text: [params.get('text'), params.get('url')].filter(Boolean).join('\n'), subject: params.get('title') }).then((o) =>
+        navigateRef.current(routeForShare(o)),
+      )
     }
-  }, [navigate])
+    startShareReceiver((o) => navigateRef.current(routeForShare(o)))
+    // Informations des publications enregistrées hors ligne : récupérées au retour du réseau.
+    const online = () => void enrichPending()
+    window.addEventListener('online', online)
+    const t = setTimeout(online, 3000)
+    return () => {
+      window.removeEventListener('online', online)
+      clearTimeout(t)
+    }
+  }, [ready])
 
   // Remonte en haut à chaque changement de page.
   useEffect(() => {
@@ -106,6 +124,8 @@ export function App() {
           <Route path="/recettes/:id/cuisine" element={<CookModePage />} />
           <Route path="/recettes/:id/journal" element={<JournalPage />} />
           <Route path="/importer/:mode" element={<ImportPage />} />
+          <Route path="/a-essayer" element={<SocialLibraryPage />} />
+          <Route path="/a-essayer/:id" element={<SocialPostPage />} />
           <Route path="/chef" element={<ChefPage />} />
           <Route path="/chef/:conversationId" element={<ChefPage />} />
           <Route path="/collections" element={<CollectionsPage />} />

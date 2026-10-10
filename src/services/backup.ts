@@ -26,6 +26,8 @@ import {
   RecipeSchema,
   type ShoppingItem,
   ShoppingItemSchema,
+  type SocialPost,
+  SocialPostSchema,
   defaultSettings,
   FoodSchema,
   emptyProfile,
@@ -33,8 +35,11 @@ import {
 import { getProfile, getSettings, updateSettings } from './settings'
 
 export const BACKUP_FORMAT = 'mon-carnet-backup'
-/** v2 : données nutritionnelles personnelles (aliments utilisés, mémoire des associations). */
-export const BACKUP_VERSION = 2
+/**
+ * v2 : données nutritionnelles personnelles (aliments utilisés, mémoire des associations).
+ * v3 : publications TikTok / Instagram « À essayer ».
+ */
+export const BACKUP_VERSION = 3
 const APP_VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev'
 
 /** Réglages exportables (aucun secret, rien de propre à l'appareil). */
@@ -75,6 +80,7 @@ const EnvelopeSchema = z.object({
   conversations: z.array(z.unknown()).default([]),
   foods: z.array(z.unknown()).default([]),
   foodMemory: z.array(z.unknown()).default([]),
+  posts: z.array(z.unknown()).default([]),
   profile: z.record(z.string(), z.string()).default({}),
   settings: z.record(z.string(), z.unknown()).default({}),
   photos: z.array(z.unknown()).default([]),
@@ -125,7 +131,7 @@ export interface ExportProgress {
 
 export async function exportBackup(onProgress?: ExportProgress): Promise<Blob> {
   const zip = new JSZip()
-  const [recipes, journal, collections, shopping, conversations, profile, settings, foods, foodMemory] = await Promise.all([
+  const [recipes, journal, collections, shopping, conversations, profile, settings, foods, foodMemory, posts] = await Promise.all([
     db.recipes.toArray(),
     db.journal.toArray(),
     db.collections.toArray(),
@@ -135,6 +141,7 @@ export async function exportBackup(onProgress?: ExportProgress): Promise<Blob> {
     getSettings(),
     db.foods.toArray(),
     db.foodMemory.toArray(),
+    db.posts.toArray(),
   ])
   const photoEntries: z.infer<typeof PhotoEntrySchema>[] = []
   const total = await db.photos.count()
@@ -179,6 +186,7 @@ export async function exportBackup(onProgress?: ExportProgress): Promise<Blob> {
       photos: photoEntries.length,
       shopping: shopping.length,
       conversations: conversations.length,
+      posts: posts.length,
     },
     recipes,
     journal,
@@ -187,6 +195,7 @@ export async function exportBackup(onProgress?: ExportProgress): Promise<Blob> {
     conversations,
     foods,
     foodMemory,
+    posts,
     profile,
     settings: exportedSettings,
     photos: photoEntries,
@@ -223,6 +232,7 @@ export interface ParsedBackup {
   conversations: Conversation[]
   foods: FoodEntry[]
   foodMemory: FoodMemory[]
+  posts: SocialPost[]
   profile: CulinaryProfile
   settings: Partial<AppSettings>
   photos: Photo[]
@@ -247,6 +257,8 @@ export interface RestorePreview {
 const MIGRATIONS: Record<number, (d: Record<string, unknown>) => Record<string, unknown>> = {
   // v1 → v2 : pas encore de données nutritionnelles personnelles.
   1: (d) => ({ ...d, version: 2, foods: [], foodMemory: [] }),
+  // v2 → v3 : pas encore de publications « À essayer ».
+  2: (d) => ({ ...d, version: 3, posts: [] }),
   // 1: (d) => ({ ...d, version: 2, ... }),
 }
 
@@ -302,6 +314,7 @@ export async function readBackup(file: Blob): Promise<ParsedBackup> {
   const collections = validateEach(e.collections, CollectionSchema)
   const shopping = validateEach(e.shopping, ShoppingItemSchema)
   const conversations = validateEach(e.conversations, ConversationSchema)
+  const posts = validateEach(e.posts, SocialPostSchema)
 
   // Photos : présence et intégrité.
   const photos: Photo[] = []
@@ -360,6 +373,16 @@ export async function readBackup(file: Blob): Promise<ParsedBackup> {
     r.steps.forEach((s) => (s.photoId = fixPhoto(s.photoId)))
   }
   journal.ok.forEach((j) => (j.photoId = fixPhoto(j.photoId)))
+  // Publications : une seule fiche par publication ; lien vers une recette absente retiré.
+  const seenKeys = new Set<string>()
+  const postsOk = posts.ok.filter((p) => !seenKeys.has(p.dedupeKey) && seenKeys.add(p.dedupeKey))
+  const postIds = new Set(postsOk.map((p) => p.id))
+  for (const p of postsOk) {
+    p.thumbnailPhotoId = fixPhoto(p.thumbnailPhotoId)
+    if (p.recipeId && !recipeIds.has(p.recipeId)) p.recipeId = null
+  }
+  for (const r of recipes.ok) if (r.sourcePostId && !postIds.has(r.sourcePostId)) r.sourcePostId = null
+  if (posts.bad) warnings.push(`${posts.bad} publication(s) « À essayer » corrompue(s) seront ignorées.`)
   collections.ok.forEach((c) => {
     c.coverPhotoId = fixPhoto(c.coverPhotoId)
     c.recipeIds = c.recipeIds.filter((id) => recipeIds.has(id))
@@ -388,6 +411,7 @@ export async function readBackup(file: Blob): Promise<ParsedBackup> {
     conversations: conversations.ok as unknown as Conversation[],
     foods: validateEach(e.foods, FoodEntrySchema).ok,
     foodMemory: validateEach(e.foodMemory, FoodMemorySchema).ok,
+    posts: postsOk,
     profile: { ...emptyProfile(), ...(e.profile as Partial<CulinaryProfile>) },
     settings,
     photos,
@@ -397,7 +421,7 @@ export async function readBackup(file: Blob): Promise<ParsedBackup> {
       journal: journal.bad + orphanJournal,
       collections: collections.bad,
       photos: badPhotos,
-      other: shopping.bad + conversations.bad,
+      other: shopping.bad + conversations.bad + posts.bad,
     },
   }
 }
@@ -438,7 +462,7 @@ export type RestoreMode = 'merge' | 'replace'
  * Les secrets et le compteur d'appels IA ne sont jamais touchés.
  */
 export async function applyRestore(b: ParsedBackup, mode: RestoreMode): Promise<{ recipes: number; photos: number }> {
-  const tables = [db.recipes, db.photos, db.journal, db.collections, db.shopping, db.conversations, db.sessions, db.timers, db.drafts, db.settings, db.foods, db.foodMemory]
+  const tables = [db.recipes, db.photos, db.journal, db.collections, db.shopping, db.conversations, db.sessions, db.timers, db.drafts, db.settings, db.foods, db.foodMemory, db.posts]
   let recipesWritten = 0
   let photosWritten = 0
   await db.transaction('rw', tables, async () => {
@@ -452,6 +476,7 @@ export async function applyRestore(b: ParsedBackup, mode: RestoreMode): Promise<
         db.conversations.clear(),
         db.foods.clear(),
         db.foodMemory.clear(),
+        db.posts.clear(),
         db.sessions.clear(),
         db.timers.clear(),
         db.drafts.clear(),
@@ -464,6 +489,7 @@ export async function applyRestore(b: ParsedBackup, mode: RestoreMode): Promise<
       await db.conversations.bulkPut(b.conversations)
       await db.foods.bulkPut(b.foods)
       await db.foodMemory.bulkPut(b.foodMemory)
+      await db.posts.bulkPut(b.posts)
       await db.settings.put({ key: 'profile', value: b.profile })
       recipesWritten = b.recipes.length
       photosWritten = b.photos.length
@@ -503,6 +529,20 @@ export async function applyRestore(b: ParsedBackup, mode: RestoreMode): Promise<
       const l = await db.foodMemory.get(m.nameKey)
       if (!l || m.updatedAt > l.updatedAt) await db.foodMemory.put(m)
     }
+    // Publications : même identifiant ou même publication (clé d'unicité) → la plus récente l'emporte.
+    const remap = new Map<string, string>()
+    for (const p of b.posts) {
+      const l = (await db.posts.get(p.id)) ?? (await db.posts.where('dedupeKey').equals(p.dedupeKey).first())
+      if (!l) await db.posts.put(p)
+      else if (p.updatedAt > l.updatedAt) {
+        if (l.id !== p.id) {
+          await db.posts.delete(l.id)
+          remap.set(l.id, p.id)
+        }
+        await db.posts.put(p)
+      } else if (l.id !== p.id) remap.set(p.id, l.id)
+    }
+    for (const [from, to] of remap) await db.recipes.where('sourcePostId').equals(from).modify({ sourcePostId: to })
     const localProfile = await getProfile()
     if (Object.values(localProfile).every((v) => !v)) await db.settings.put({ key: 'profile', value: b.profile })
   })

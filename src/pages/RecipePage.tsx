@@ -4,6 +4,7 @@ import {
   Bookmark,
   BookmarkCheck,
   ChefHat,
+  Clapperboard,
   Clock,
   Copy,
   ExternalLink,
@@ -359,8 +360,13 @@ export default function RecipePage() {
             </>
           )}
 
+          {recipe.sourcePostId && (
+            <Link to={`/a-essayer/${recipe.sourcePostId}`} className="mt-8 flex items-center gap-2 rounded-2xl bg-sunken p-3 text-sm font-semibold text-terra">
+              <Clapperboard size={17} /> Voir la publication d’origine (vidéo, notes)
+            </Link>
+          )}
           {(recipe.source || recipe.sourceUrl) && (
-            <p className="mt-8 text-sm text-muted">
+            <p className={`${recipe.sourcePostId ? 'mt-3' : 'mt-8'} text-sm text-muted`}>
               Source :{' '}
               {recipe.sourceUrl ? (
                 <a href={recipe.sourceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-terra underline-offset-2 hover:underline">

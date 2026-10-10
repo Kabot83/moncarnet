@@ -77,6 +77,14 @@ export async function saveRecipe(recipe: Recipe, { touch = true } = {}): Promise
     )
   }
   await db.recipes.put(parsed.data)
+  // Fiche issue d'une publication « À essayer » : la publication passe à « Transformée en recette ».
+  const postId = parsed.data.sourcePostId
+  if (postId) {
+    const post = await db.posts.get(postId)
+    // Une variante ou une copie garde la source, sans « reprendre » le lien de la fiche d'origine.
+    if (post && (post.recipeId == null || post.recipeId === parsed.data.id) && (post.recipeId !== parsed.data.id || post.status !== 'converted'))
+      await db.posts.update(postId, { recipeId: parsed.data.id, status: 'converted', updatedAt: Date.now() })
+  }
   return parsed.data
 }
 
@@ -89,8 +97,10 @@ export const toggleToTry = (r: Recipe) => patchRecipe(r.id, { toTry: !r.toTry },
 
 /** Supprime une recette et tout ce qui en dépend (journal, préparation, minuteries, collections, photos). */
 export async function deleteRecipe(id: string) {
-  await db.transaction('rw', [db.recipes, db.journal, db.sessions, db.timers, db.collections, db.drafts], async () => {
+  await db.transaction('rw', [db.recipes, db.journal, db.sessions, db.timers, db.collections, db.drafts, db.posts], async () => {
     await db.recipes.delete(id)
+    // Publication d'origine : conservée, redevient « à essayer ».
+    await db.posts.where('recipeId').equals(id).modify({ recipeId: null, status: 'toTry', updatedAt: Date.now() })
     await db.journal.where('recipeId').equals(id).delete()
     await db.sessions.delete(id)
     await db.timers.where('recipeId').equals(id).delete()

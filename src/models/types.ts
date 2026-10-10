@@ -201,8 +201,66 @@ export const RecipeSchema = z.object({
   cookedWeightG: z.number().positive().max(1e6).nullable().default(null),
   /** Poids total des ingrédients au moment de la pesée : sert à détecter qu'il faut la refaire. */
   cookedWeightRawG: z.number().positive().max(1e6).nullable().default(null),
+  /** Publication TikTok / Instagram dont la fiche est issue (« À essayer »). */
+  sourcePostId: z.string().max(64).nullable().default(null),
 })
 export type Recipe = z.infer<typeof RecipeSchema>
+
+// ---------------------------------------------------------------------------
+// Publications TikTok / Instagram enregistrées (« À essayer »)
+// ---------------------------------------------------------------------------
+
+export const PLATFORMS = ['tiktok', 'instagram'] as const
+export type Platform = (typeof PLATFORMS)[number]
+export const POST_STATUSES = ['toTry', 'tested', 'converted'] as const
+export type PostStatus = (typeof POST_STATUSES)[number]
+
+/** Champs modifiables à la main : un enrichissement automatique ne les écrase jamais. */
+export const POST_USER_FIELDS = ['title', 'description', 'author'] as const
+
+export const SocialPostSchema = z.object({
+  id,
+  platform: z.enum(PLATFORMS),
+  /** vidéo TikTok, reel / post Instagram, ou lien court non encore résolu. */
+  kind: z.enum(['video', 'photo', 'reel', 'post', 'unknown']).default('unknown'),
+  /** Lien tel que reçu (partage ou collage). */
+  originalUrl: z.string().max(2000),
+  /** Lien nettoyé (sans paramètres de suivi), canonique quand l'identifiant est connu. */
+  url: z.string().max(2000),
+  /** Identifiant de la publication (n° de vidéo TikTok, code Instagram), si connu. */
+  postId: z.string().max(64).nullable().default(null),
+  /** Clé d'unicité : « tiktok:7301… », « instagram:C0abc… » ou lien court normalisé. */
+  dedupeKey: z.string().max(2000),
+  title: z.string().max(300).default(''),
+  description: z.string().max(5000).default(''),
+  /** Texte transmis par le partage Android (hors lien), conservé tel quel. */
+  sharedText: z.string().max(5000).default(''),
+  author: z.string().max(200).default(''),
+  authorHandle: z.string().max(100).default(''),
+  authorUrl: z.string().max(500).default(''),
+  /** Copie locale de la miniature (photos) : consultable hors ligne et après expiration du lien. */
+  thumbnailPhotoId: z.string().nullable().default(null),
+  notes: z.string().max(10000).default(''),
+  tags: z.array(z.string().max(40)).max(40).default([]),
+  status: z.enum(POST_STATUSES).default('toTry'),
+  favorite: z.boolean().default(false),
+  /** Fiche recette créée à partir de la publication. */
+  recipeId: z.string().nullable().default(null),
+  /** Champs corrigés à la main (jamais écrasés par l'enrichissement). */
+  edited: z.array(z.enum(POST_USER_FIELDS)).default([]),
+  /**
+   * Informations de la plateforme : pending (à récupérer), ok, limited (publication accessible,
+   * sans métadonnées publiques — Instagram), unavailable (privée, supprimée ou introuvable),
+   * failed (erreur, nouvel essai plus tard).
+   */
+  metaStatus: z.enum(['pending', 'ok', 'limited', 'unavailable', 'failed']).default('pending'),
+  metaMessage: z.string().max(300).default(''),
+  metaFetchedAt: z.number().nullable().default(null),
+  metaAttempts: z.number().int().min(0).default(0),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+})
+export type SocialPost = z.infer<typeof SocialPostSchema>
 
 export const QuantityUsedSchema = z.object({
   ingredientId: z.string(),
@@ -410,7 +468,7 @@ export interface Draft {
   id: string
   data: Recipe
   /** Origine du brouillon, pour l'affichage. */
-  origin: 'manual' | 'edit' | 'url' | 'photo' | 'text' | 'ai' | 'variant'
+  origin: 'manual' | 'edit' | 'url' | 'photo' | 'text' | 'ai' | 'variant' | 'social'
   /** Points à vérifier signalés par l'import. */
   warnings?: string[]
   updatedAt: number
