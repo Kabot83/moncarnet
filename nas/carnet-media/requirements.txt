@@ -1,0 +1,6 @@
+# Versions figées : mises à jour volontaires (reconstruction de l'image).
+yt-dlp==2026.8.19
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+httpx==0.28.1
+cryptography==50.0.2

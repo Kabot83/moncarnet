@@ -1,0 +1,69 @@
+name: Service NAS (Carnet Media)
+
+# Tests, construction et vérification de l'image Docker du service, puis publication dans le
+# registre GitHub (ghcr.io/kabot83/carnet-media). Aucun secret : seul le jeton automatique
+# GITHUB_TOKEN est utilisé pour publier l'image. Le NAS télécharge ensuite l'image.
+
+on:
+  push:
+    branches: [master]
+    paths: ['nas/carnet-media/**', '.github/workflows/carnet-media.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: carnet-media
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nas/carnet-media
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Tests automatisés (réseau simulé)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q -r requirements.txt pytest
+          python -m pytest -q -p no:cacheprovider tests/test_service.py
+
+      - name: Version
+        id: v
+        run: echo "version=$(python -c 'from app.config import VERSION; print(VERSION)')" >> "$GITHUB_OUTPUT"
+
+      - name: Construction de l'image
+        run: docker build -t carnet-media:test .
+
+      - name: Vérification de l'image (non-root, sans curl_cffi, ffmpeg, démarrage, jeton obligatoire)
+        run: |
+          test "$(docker run --rm carnet-media:test id -u)" = "10001"
+          docker run --rm carnet-media:test sh -c '! python -c "import curl_cffi"'
+          docker run --rm carnet-media:test ffmpeg -version | head -1
+          mkdir -p /tmp/data && chmod 777 /tmp/data
+          docker run -d --name cm --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+            -v /tmp/data:/data -p 127.0.0.1:8443:8443 carnet-media:test
+          docker exec cm python -m app.admin cert create --ip 127.0.0.1 --name localhost
+          docker restart cm && sleep 6
+          curl -sS --cacert /tmp/data/tls/cert.pem https://127.0.0.1:8443/v1/health | grep '"status":"ok"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' --cacert /tmp/data/tls/cert.pem https://127.0.0.1:8443/v1/storage)" = "401"
+          docker logs cm
+          docker rm -f cm
+
+      - name: Publication dans le registre GitHub
+        if: github.ref == 'refs/heads/master'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for tag in "${{ steps.v.outputs.version }}" latest; do
+            docker tag carnet-media:test ghcr.io/kabot83/carnet-media:$tag
+            docker push ghcr.io/kabot83/carnet-media:$tag
+          done

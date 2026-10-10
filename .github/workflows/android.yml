@@ -11,6 +11,8 @@ name: APK Android
 on:
   push:
     branches: [master]
+    # Le service du NAS (nas/) a son propre workflow : il ne relance ni l'APK ni la PWA.
+    paths-ignore: ['nas/**', '.github/workflows/carnet-media.yml']
   workflow_dispatch:
 
 permissions:
