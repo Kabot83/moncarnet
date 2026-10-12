@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 et précédents : mêmes exclusions que data_extraction_rules.xml (sauvegarde cloud). -->
+<full-backup-content>
+    <exclude domain="file" path="carnet-videos/" />
+    <exclude domain="file" path="securite/" />
+    <exclude domain="sharedpref" path="carnet_media.xml" />
+</full-backup-content>

@@ -129,7 +129,11 @@ export interface ExportProgress {
   (done: number, total: number): void
 }
 
-export async function exportBackup(onProgress?: ExportProgress): Promise<Blob> {
+/**
+ * `record` : faux pour les copies de sécurité automatiques — elles ne doivent pas être prises pour
+ * une sauvegarde faite par l'utilisateur (date « Dernière sauvegarde » inchangée).
+ */
+export async function exportBackup(onProgress?: ExportProgress, { record = true }: { record?: boolean } = {}): Promise<Blob> {
   const zip = new JSZip()
   const [recipes, journal, collections, shopping, conversations, profile, settings, foods, foodMemory, posts] = await Promise.all([
     db.recipes.toArray(),
@@ -206,7 +210,7 @@ export async function exportBackup(onProgress?: ExportProgress): Promise<Blob> {
     'Sauvegarde de Mon Carnet.\nPour restaurer : Réglages → Sauvegarde → Restaurer mon carnet, puis choisir ce fichier.\nCe fichier ne contient aucune clé API.\n',
   )
   const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } })
-  await updateSettings({ lastBackupAt: Date.now() })
+  if (record) await updateSettings({ lastBackupAt: Date.now() })
   return new Blob([bytes as BlobPart], { type: 'application/zip' })
 }
 

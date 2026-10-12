@@ -1,12 +1,13 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ChefHat, ChevronRight, Clapperboard, Database, Info, Monitor, Moon, ShieldCheck, ShoppingBasket, Sun, User } from 'lucide-react'
+import { ChefHat, ChevronRight, Clapperboard, Database, Info, Monitor, Moon, ShoppingBasket, Sun, User } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { StorageStatus } from '@/components/StorageStatus'
 import { Button } from '@/components/ui/Button'
 import { useConfirm, useToast } from '@/components/ui/Feedback'
 import { Segmented, Switch } from '@/components/ui/Fields'
 import { Page } from '@/components/ui/Layout'
-import { db, requestPersistentStorage, storageEstimate } from '@/db/db'
+import { db, storageEstimate } from '@/db/db'
 import { seedDemoData } from '@/db/seed'
 import { formatBytes, relativeDays } from '@/lib/format'
 import { deleteDemoData } from '@/services/recipes'
@@ -113,26 +114,7 @@ export default function SettingsPage() {
             {photos ? ` · ${photos.count} photo${photos.count > 1 ? 's' : ''} (${formatBytes(photos.bytes)})` : ''}
             {storage ? ` · ${formatBytes(storage.usage)} utilisés` : ''}
           </p>
-          {storage && (
-            <p className="mt-1 flex items-center gap-1.5 text-muted">
-              <ShieldCheck size={15} className={storage.persisted ? 'text-sage' : 'text-faint'} />
-              {storage.persisted ? 'Stockage persistant accordé : le navigateur ne l’effacera pas de lui-même.' : 'Stockage non persistant : le navigateur pourrait l’effacer en cas de manque d’espace.'}
-            </p>
-          )}
-          {storage && !storage.persisted && (
-            <Button
-              size="sm"
-              variant="secondary"
-              className="mt-2"
-              onClick={async () => {
-                const ok = await requestPersistentStorage()
-                setStorage(await storageEstimate())
-                toast[ok ? 'success' : 'info'](ok ? 'Stockage persistant accordé' : 'Le navigateur n’a pas accordé le stockage persistant. Installez l’application sur l’écran d’accueil puis réessayez.')
-              }}
-            >
-              Demander le stockage persistant
-            </Button>
-          )}
+          <StorageStatus />
         </div>
       </SettingsGroup>
 

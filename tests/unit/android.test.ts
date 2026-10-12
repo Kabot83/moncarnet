@@ -68,3 +68,18 @@ describe('partage Android → Mon Carnet', () => {
     expect(plugin).toMatch(/public void ack\(/)
   })
 })
+
+describe('sauvegarde Android (Auto Backup)', () => {
+  it('gros fichiers et jeton exclus du cloud (limite de 25 Mo), base des recettes incluse', () => {
+    const manifest = readFileSync('android/app/src/main/AndroidManifest.xml', 'utf-8')
+    expect(manifest).toContain('android:fullBackupContent="@xml/backup_rules"')
+    expect(manifest).toContain('android:dataExtractionRules="@xml/data_extraction_rules"')
+    for (const f of ['backup_rules.xml', 'data_extraction_rules.xml']) {
+      const xml = readFileSync(`android/app/src/main/res/xml/${f}`, 'utf-8')
+      expect(xml).toContain('<exclude domain="file" path="carnet-videos/" />')
+      expect(xml).toContain('<exclude domain="file" path="securite/" />')
+      expect(xml).toContain('<exclude domain="sharedpref" path="carnet_media.xml" />')
+      expect(xml).not.toMatch(/domain="(root|database)"/) // la base de la WebView reste sauvegardée
+    }
+  })
+})

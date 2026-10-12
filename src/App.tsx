@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { BottomNav } from './components/BottomNav'
+import { IntegrityGuard } from './components/IntegrityGuard'
 import { TimerEngine, TimersDock } from './components/TimersDock'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { LoadingBlock } from './components/ui/Spinner'
@@ -12,7 +13,7 @@ import { enrichPending } from './social/posts'
 import { processShare, routeForShare } from './social/share'
 import { collectOrphanPhotos } from './services/photos'
 import { getSettings, updateSettings, useSettings } from './services/settings'
-import { initNative, setSystemBarsDark } from './platform/native'
+import { initNative, isNative, setSystemBarsDark } from './platform/native'
 import { initKeyboard } from './platform/keyboard'
 import HomePage from './pages/HomePage'
 import RecipesPage from './pages/RecipesPage'
@@ -47,7 +48,9 @@ function bootstrap() {
       await updateSettings({ demoSeeded: true })
       await seedDemoData()
     }
-    void requestPersistentStorage()
+    // PWA : demande de stockage persistant au navigateur. APK : inutile (toujours refusé par la
+    // WebView) — la persistance y est vérifiée par IntegrityGuard.
+    if (!isNative) void requestPersistentStorage()
     setTimeout(() => void collectOrphanPhotos(), 5000)
   })()
   return boot
@@ -149,6 +152,7 @@ export function App() {
       {!immersive && <TimersDock />}
       {!immersive && <BottomNav />}
       <UpdatePrompt />
+      <IntegrityGuard />
     </div>
   )
 }
