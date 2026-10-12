@@ -91,9 +91,10 @@ jobs:
           head -c 3000000 /dev/urandom > /tmp/photo.bin
           SHA="$(sha256sum /tmp/photo.bin | cut -d' ' -f1)"
           curl -sf -X PUT -H "$AUTH" -H 'Content-Type: image/jpeg' --data-binary @/tmp/photo.bin http://127.0.0.1:8090/v1/blobs/$SHA
-          curl -sf -H "$AUTH" -H 'Content-Type: application/json' \
+          RES="$(curl -sf -H "$AUTH" -H 'Content-Type: application/json' \
             -d "{\"changes\":[{\"collection\":\"photos\",\"id\":\"ph_1\",\"base_rev\":0,\"data\":{\"id\":\"ph_1\",\"sha256\":\"$SHA\"}}]}" \
-            http://127.0.0.1:8090/v1/sync/push | grep -q '"status":"ok"'
+            http://127.0.0.1:8090/v1/sync/push)"
+          [[ "$RES" == *'"status":"ok"'* ]]
 
           # Sauvegarde, cohérence, vérification et restauration à blanc, dans le conteneur.
           docker exec cs python -m app.admin backup
@@ -109,12 +110,14 @@ jobs:
           for i in $(seq 30); do curl -sf http://127.0.0.1:8090/v1/health && break; sleep 1; done
           echo
           ls -d /tmp/cs/data-avant-restauration-*
-          printf 'essai\n%s\n' "$PW" | docker exec -i cs python -m app.admin selftest | grep -q 'Connexion réussie'
+          printf 'essai\n%s\n' "$PW" | docker exec -i cs python -m app.admin selftest > /tmp/selftest2.txt
+          grep -q 'Connexion réussie' /tmp/selftest2.txt
           docker exec cs python -m app.admin check --full
 
-          docker logs cs
-          # Aucun mot de passe ni jeton dans le journal.
-          if docker logs cs 2>&1 | grep -qE "$PW|mca_|mcr_"; then echo 'Secret trouvé dans le journal'; exit 1; fi
+          docker logs cs > /tmp/journal.txt 2>&1
+          cat /tmp/journal.txt
+          # Aucun mot de passe ni jeton dans le journal (lu depuis un fichier : pas de coupure de flux).
+          if grep -qE "$PW|mca_|mcr_" /tmp/journal.txt; then echo 'Secret trouvé dans le journal'; exit 1; fi
           docker rm -f cs
 
       - name: Publication dans le registre GitHub
