@@ -43,6 +43,7 @@ vi.mock('@capacitor/filesystem', () => ({
 vi.mock('@/platform/native', async (orig) => ({ ...(await orig<typeof import('@/platform/native')>()), isNative: true }))
 
 import { db } from '@/db/db'
+import { BackupError, applyRestore, exportBackup, readBackup } from '@/services/backup'
 import { emptyIngredient, emptyRecipe, saveRecipe } from '@/services/recipes'
 import { getSettings } from '@/services/settings'
 import { acknowledgeLoss, checkIntegrity, checkVideos, refreshSnapshot, restoreSnapshot } from '@/services/integrity'
@@ -54,9 +55,13 @@ async function wipeWebViewDatabase() {
   await Promise.all(db.tables.filter((t) => t.name !== 'secrets').map((t) => t.clear()))
 }
 
+const PHOTO = new Uint8Array(Array.from({ length: 4096 }, (_, i) => (i * 37) % 256))
+
 async function sampleData() {
+  await db.photos.put({ id: 'ph_soupe', blob: new Blob([PHOTO], { type: 'image/webp' }), thumb: new Blob([PHOTO.slice(0, 512)], { type: 'image/webp' }), mime: 'image/webp', width: 800, height: 600, size: 4608, createdAt: 1, isDemo: false })
   const r = emptyRecipe({
     title: 'Soupe à l’oignon',
+    mainPhotoId: 'ph_soupe',
     ingredients: [emptyIngredient({ name: 'oignon', quantity: 4, unit: '', nutrition: { food: { source: 'ciqual', id: '20034', name: 'Oignon, cru', brand: '', basis: '100g', per100: { kcal: 39, kj: 163, protein: 1.2, carbs: 7.2, fat: 0.2, fiber: 1.9, sugars: 4.7, satFat: 0, salt: 0.01 }, version: 'Ciqual 2025', notes: [], fetchedAt: 1 }, gramsPerUnit: 150, density: null, overrides: {}, linkedAt: 1 } })],
     notes: { tips: 'Bien caraméliser', modifications: '', mistakes: '', ideas: '', storage: '', reheating: '' },
   })
@@ -101,6 +106,9 @@ describe('vérification de la persistance (APK)', () => {
     expect(await restoreSnapshot()).toEqual({ recipes: 1 })
     const r = (await db.recipes.get(recipeId))!
     expect(r.notes.tips).toBe('Bien caraméliser')
+    expect(r.mainPhotoId).toBe('ph_soupe')
+    const photo = (await db.photos.get('ph_soupe'))!
+    expect(new Uint8Array(await photo.blob.arrayBuffer())).toEqual(PHOTO) // photo identique, octet pour octet
     expect(r.ingredients[0].nutrition).toMatchObject({ gramsPerUnit: 150, food: { id: '20034' } })
     expect(await db.posts.get(postId)).toMatchObject({ notes: 'À tester dimanche' })
     expect(await checkIntegrity(true)).toMatchObject({ kind: 'ok' })
@@ -144,5 +152,68 @@ describe('vidéos enregistrées', () => {
     await db.posts.update(other.id, { video: video('b.mp4'), title: 'Vidéo disparue' })
     files.set('carnet-videos/a.mp4', Buffer.alloc(2048))
     expect(await checkVideos()).toEqual({ referenced: 2, present: 1, bytes: 2048, missing: [{ postId: other.id, title: 'Vidéo disparue' }] })
+  })
+})
+
+
+describe('restauration : jamais une base valide écrasée par une copie vide ou incomplète', () => {
+  it('copie automatique refusée tant qu’aucune perte n’est détectée', async () => {
+    await checkIntegrity(true)
+    await sampleData()
+    await refreshSnapshot()
+    await expect(restoreSnapshot()).rejects.toThrow(/intacte/)
+    expect(await db.recipes.count()).toBe(1)
+  })
+
+  it('copie corrompue → copie précédente utilisée ; toutes deux inutilisables → refus, rien n’est modifié', async () => {
+    await checkIntegrity(true)
+    await sampleData()
+    await refreshSnapshot()
+    await saveRecipe(emptyRecipe({ title: 'Tarte' }))
+    await refreshSnapshot() // la précédente (1 recette) est conservée
+    files.set('securite/copie-auto.zip', files.get('securite/copie-auto.zip')!.subarray(0, 300)) // fichier tronqué
+    await wipeWebViewDatabase()
+    await checkIntegrity(true)
+    expect(await restoreSnapshot()).toEqual({ recipes: 1 })
+
+    await wipeWebViewDatabase()
+    await checkIntegrity(true)
+    files.set('securite/copie-auto-precedente.zip', Buffer.from('pas un zip'))
+    await saveRecipe(emptyRecipe({ title: 'Recette recréée après la perte' }))
+    await expect(restoreSnapshot()).rejects.toThrow(/complète et intacte/)
+    expect((await db.recipes.toArray()).map((r) => r.title)).toEqual(['Recette recréée après la perte'])
+  })
+
+  it('copie incomplète (moins de recettes qu’à sa création) → refusée', async () => {
+    await checkIntegrity(true)
+    await sampleData()
+    await saveRecipe(emptyRecipe({ title: 'Tarte' }))
+    await refreshSnapshot()
+    // Copie remplacée par une archive valide mais contenant une seule recette.
+    await db.recipes.where('title').equals('Tarte').delete()
+    const smaller = Buffer.from(await (await exportBackup(undefined, { record: false })).arrayBuffer())
+    files.set('securite/copie-auto.zip', smaller)
+    files.delete('securite/copie-auto-precedente.zip')
+    await wipeWebViewDatabase()
+    await checkIntegrity(true)
+    await expect(restoreSnapshot()).rejects.toThrow(/complète et intacte/)
+  })
+
+  it('une base vidée ne remplace jamais la copie qui contenait des recettes', async () => {
+    await checkIntegrity(true)
+    await sampleData()
+    const good = await refreshSnapshot()
+    await db.recipes.clear()
+    expect(await refreshSnapshot()).toEqual(good)
+  })
+
+  it('« Tout remplacer » par une sauvegarde sans recette : refusé si le carnet contient des recettes personnelles', async () => {
+    const empty = await readBackup(await exportBackup())
+    await sampleData()
+    await expect(applyRestore(empty, 'replace')).rejects.toBeInstanceOf(BackupError)
+    expect(await db.recipes.count()).toBe(1)
+    // Carnet ne contenant que les recettes de démonstration : remplacement autorisé.
+    await db.recipes.toCollection().modify({ isDemo: true })
+    await expect(applyRestore(empty, 'replace')).resolves.toBeTruthy()
   })
 })

@@ -466,6 +466,9 @@ export type RestoreMode = 'merge' | 'replace'
  * Les secrets et le compteur d'appels IA ne sont jamais touchés.
  */
 export async function applyRestore(b: ParsedBackup, mode: RestoreMode): Promise<{ recipes: number; photos: number }> {
+  // Garde-fou : « Tout remplacer » par une sauvegarde sans aucune recette effacerait un carnet valide.
+  if (mode === 'replace' && b.recipes.length === 0 && (await db.recipes.filter((r) => !r.isDemo).count()) > 0)
+    throw new BackupError('Cette sauvegarde ne contient aucune recette : elle ne peut pas remplacer votre carnet. Utilisez « Fusionner » si besoin.')
   const tables = [db.recipes, db.photos, db.journal, db.collections, db.shopping, db.conversations, db.sessions, db.timers, db.drafts, db.settings, db.foods, db.foodMemory, db.posts]
   let recipesWritten = 0
   let photosWritten = 0

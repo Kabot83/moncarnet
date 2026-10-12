@@ -80,6 +80,19 @@ describe('sauvegarde Android (Auto Backup)', () => {
       expect(xml).toContain('<exclude domain="file" path="securite/" />')
       expect(xml).toContain('<exclude domain="sharedpref" path="carnet_media.xml" />')
       expect(xml).not.toMatch(/domain="(root|database)"/) // la base de la WebView reste sauvegardée
+      expect(xml).not.toMatch(/<include /) // aucune liste blanche : tout le reste est sauvegardé
+    }
+    // Liste EXACTE des exclusions : toute exclusion ajoutée par erreur fait échouer ce test.
+    const excludes = (xml: string) => [...xml.matchAll(/<exclude domain="(\w+)" path="([^"]+)"/g)].map((m) => `${m[1]}:${m[2]}`)
+    expect(excludes(readFileSync('android/app/src/main/res/xml/backup_rules.xml', 'utf-8'))).toEqual(['file:carnet-videos/', 'file:securite/', 'sharedpref:carnet_media.xml'])
+    const rules = readFileSync('android/app/src/main/res/xml/data_extraction_rules.xml', 'utf-8')
+    const cloud = rules.slice(rules.indexOf('<cloud-backup>'), rules.indexOf('</cloud-backup>'))
+    const transfer = rules.slice(rules.indexOf('<device-transfer>'), rules.indexOf('</device-transfer>'))
+    expect(excludes(cloud)).toEqual(['file:carnet-videos/', 'file:securite/', 'sharedpref:carnet_media.xml'])
+    expect(excludes(transfer)).toEqual(['sharedpref:carnet_media.xml']) // transfert direct : vidéos conservées
+    // Données essentielles jamais exclues : base de la WebView (app_webview), file des partages, préférences.
+    for (const xml of [rules, readFileSync('android/app/src/main/res/xml/backup_rules.xml', 'utf-8')]) {
+      expect(xml).not.toMatch(/app_webview|IndexedDB|moncarnet_shares|CapacitorStorage/)
     }
   })
 })

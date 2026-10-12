@@ -93,8 +93,8 @@ export default function BackupPage() {
       const r = await applyRestore(preview.backup, mode)
       toast.success(`Restauration terminée : ${r.recipes} recette(s), ${r.photos} photo(s)`)
       setPreview(null)
-    } catch {
-      toast.error('La restauration a échoué : aucune donnée n’a été modifiée.')
+    } catch (e) {
+      toast.error(e instanceof BackupError ? e.message : 'La restauration a échoué : aucune donnée n’a été modifiée.')
     } finally {
       setRestoring(false)
     }

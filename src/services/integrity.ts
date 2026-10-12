@@ -18,7 +18,7 @@
  */
 import { db } from '@/db/db'
 import { isNative } from '@/platform/native'
-import { applyRestore, exportBackup, readBackup } from './backup'
+import { type ParsedBackup, applyRestore, exportBackup, readBackup } from './backup'
 
 const MARKER_FILE = 'securite/repere.json'
 const SNAPSHOT_FILE = 'securite/copie-auto.zip'
@@ -210,6 +210,8 @@ export async function refreshSnapshot(force = false): Promise<SnapshotInfo | nul
   if (!marker) return null
   const { fingerprint, recipes } = await dataFingerprint()
   if (!force && marker.snapshot?.fingerprint === fingerprint && (await exists(SNAPSHOT_FILE))) return marker.snapshot
+  // Une base devenue vide ne remplace jamais une copie qui contenait des recettes.
+  if (recipes === 0 && (marker.snapshot?.recipes ?? 0) > 0) return marker.snapshot
   const blob = await exportBackup(undefined, { record: false })
   const { Filesystem, Data } = await fs()
   if (await exists(SNAPSHOT_FILE)) {
@@ -227,14 +229,35 @@ export async function refreshSnapshot(force = false): Promise<SnapshotInfo | nul
   return info
 }
 
-/** Restaure la copie de sécurité automatique (remplace la base, vidéos non concernées). */
+/** Copie lisible, intacte et complète (autant de recettes que lors de sa création) ; null sinon. */
+async function readCompleteSnapshot(path: string, expected: number | null): Promise<ParsedBackup | null> {
+  const blob = await readBlob(path)
+  if (!blob) return null
+  try {
+    const parsed = await readBackup(blob)
+    const intact = parsed.invalid.recipes === 0 && parsed.invalid.photos === 0 && parsed.invalid.journal === 0 && parsed.invalid.collections === 0
+    const complete = expected == null ? parsed.recipes.length > 0 : parsed.recipes.length >= expected
+    return intact && complete ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Restaure la copie de sécurité automatique (remplace la base ; vidéos non concernées).
+ * Refusée si aucune perte n'a été détectée, si la copie est vide, corrompue ou incomplète, ou
+ * si la base actuelle contient plus de recettes personnelles que la copie.
+ */
 export async function restoreSnapshot(): Promise<{ recipes: number }> {
-  const blob = (await readBlob(SNAPSHOT_FILE)) ?? (await readBlob(SNAPSHOT_PREVIOUS))
-  if (!blob) throw new Error('Aucune copie de sécurité sur ce téléphone.')
-  const parsed = await readBackup(blob)
+  const state = await checkIntegrity()
+  if (state.kind !== 'lost') throw new Error('La base actuelle est intacte : la copie de sécurité ne peut pas la remplacer.')
+  const marker = await readJson<NativeMarker>(MARKER_FILE)
+  const parsed = (await readCompleteSnapshot(SNAPSHOT_FILE, marker?.snapshot?.recipes ?? null)) ?? (await readCompleteSnapshot(SNAPSHOT_PREVIOUS, null))
+  if (!parsed) throw new Error('Aucune copie de sécurité complète et intacte sur ce téléphone.')
+  const local = await db.recipes.filter((r) => !r.isDemo).count()
+  if (local > parsed.recipes.length) throw new Error('La base actuelle contient plus de recettes que la copie : restauration refusée.')
   const res = await applyRestore(parsed, 'replace')
   // La base restaurée reçoit de nouveau le repère de ce téléphone.
-  const marker = await readJson<NativeMarker>(MARKER_FILE)
   if (marker) await db.settings.put({ key: SETTINGS_KEY, value: { installId: marker.installId, createdAt: marker.createdAt } })
   current = null
   return { recipes: res.recipes }
