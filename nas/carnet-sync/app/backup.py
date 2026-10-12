@@ -62,21 +62,21 @@ def check(db_path: Path, data_dir: Path, full: bool = False) -> dict:
         if ic != 'ok':
             errors.append(f'Base SQLite endommagée : {ic}')
         known: set[tuple[str, str]] = set()
-        blobs = c.execute('SELECT owner_id, sha256, size FROM blobs').fetchall()
+        blobs = c.execute('SELECT space_id, sha256, size FROM blobs').fetchall()
         for b in blobs:
-            known.add((b['owner_id'], b['sha256']))
-            p = data_dir / 'files' / b['owner_id'] / b['sha256'][:2] / b['sha256']
+            known.add((b['space_id'], b['sha256']))
+            p = data_dir / 'files' / b['space_id'] / b['sha256'][:2] / b['sha256']
             if not p.exists():
-                errors.append(f'Fichier manquant : files/{b["owner_id"]}/…/{b["sha256"][:12]}')
+                errors.append(f'Fichier manquant : files/{b["space_id"]}/…/{b["sha256"][:12]}')
             elif p.stat().st_size != b['size']:
                 errors.append(f'Taille incorrecte : {b["sha256"][:12]}')
             elif full and sha256_file(p) != b['sha256']:
                 errors.append(f'Contenu altéré : {b["sha256"][:12]}')
-        photos = c.execute("SELECT owner_id, id, data FROM records WHERE collection = 'photos' AND deleted = 0").fetchall()
+        photos = c.execute("SELECT space_id, id, data FROM records WHERE collection = 'photos' AND deleted = 0").fetchall()
         for r in photos:
             d = json.loads(r['data'])
             for sha in {d.get('sha256'), d.get('thumbSha256')} - {None, ''}:
-                if (r['owner_id'], sha) not in known:
+                if (r['space_id'], sha) not in known:
                     errors.append(f'Photo {r["id"]} sans fichier enregistré ({sha[:12]})')
         pending = c.execute("SELECT id, blob_hashes FROM transfers WHERE status = 'pending'").fetchall()
         for t in pending:
@@ -139,7 +139,7 @@ def create_backup(s: Settings, db: Database, root: Path) -> dict:
         db.backup_to(tmp / DB_FILE)  # instantané cohérent (WAL compris)
         snap = _ro(tmp / DB_FILE)
         try:
-            wanted = [(f'files/{r["owner_id"]}/{r["sha256"][:2]}/{r["sha256"]}', r['sha256']) for r in snap.execute('SELECT owner_id, sha256 FROM blobs')]
+            wanted = [(f'files/{r["space_id"]}/{r["sha256"][:2]}/{r["sha256"]}', r['sha256']) for r in snap.execute('SELECT space_id, sha256 FROM blobs')]
             for t in snap.execute("SELECT id, blob_hashes FROM transfers WHERE status = 'pending'"):
                 wanted += [(f'transfers/{t["id"]}/{sha}', sha) for sha in json.loads(t['blob_hashes'])]
         finally:
@@ -245,10 +245,12 @@ def restore_test(src: Path, scratch: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def nightly(s: Settings, db: Database) -> dict:
-    """Expiration des invitations, sauvegarde + rotation, PUIS nettoyage des fichiers figés."""
+    """Invitations expirées, corbeille de plus de 30 jours, sauvegarde + rotation, PUIS nettoyage
+    des fichiers figés."""
+    from .family import auto_purge
     from .transfers import cleanup_frozen, expire_old
 
-    status: dict = {'at': now(), 'expired_transfers': expire_old(db, s)}
+    status: dict = {'at': now(), 'expired_transfers': expire_old(db, s), 'trash_purged': auto_purge(db)}
     try:
         if s.backup_dir:
             status.update(create_backup(s, db, s.backup_dir))

@@ -5,10 +5,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 
-# Collections synchronisées : liste fermée (tables Dexie de Mon Carnet).
-COLLECTIONS = ('recipes', 'photos', 'journal', 'collections', 'shopping', 'posts', 'foods', 'foodMemory')
+# Collections synchronisées : liste fermée (tables Dexie de Mon Carnet + partie personnelle des
+# recettes familiales, « recipeMeta »).
+COLLECTIONS = ('recipes', 'photos', 'journal', 'collections', 'shopping', 'posts', 'foods', 'foodMemory', 'recipeMeta')
 
 
 def _int(name: str, default: int) -> int:

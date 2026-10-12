@@ -128,7 +128,7 @@ def test_conflit_et_idempotence(srv):
     assert r2['server']['data']['title'] == 'téléphone' and r2['server']['rev'] == r1['rev']
     # Renvoi identique après une coupure : succès, aucune nouvelle révision.
     again = push(c, a1, {'collection': 'recipes', 'id': 'r_1', 'base_rev': rev, 'data': recipe('r_1', 'téléphone')})[0]
-    assert again == {'collection': 'recipes', 'id': 'r_1', 'status': 'ok', 'rev': r1['rev']}
+    assert again == {'collection': 'recipes', 'id': 'r_1', 'space': 'personal', 'status': 'ok', 'rev': r1['rev']}
     # Suppression transmise comme un enregistrement (tombstone).
     push(c, a1, {'collection': 'recipes', 'id': 'r_1', 'base_rev': r1['rev'], 'deleted': True})
     last = c.get('/v1/sync/changes?since=0', headers=H(a2)).json()['changes'][-1]
@@ -299,7 +299,7 @@ def test_sauvegarde_versions_verification_restauration(srv, tmp_path):
     time.sleep(1.1)  # nom de version à la seconde
     r2 = create_backup(s, db, root)
     b1, b2 = root / r1['backup'], root / r2['backup']
-    owner = db.one('SELECT owner_id FROM blobs')['owner_id']
+    owner = db.one('SELECT space_id FROM blobs')['space_id']
     rel = f'files/{owner}/{sha[:2]}/{sha}'
     # Photo inchangée : reliée à la version précédente (pas d'espace en double), chaque version reste complète.
     assert (b2 / rel).read_bytes() == PNG and os.path.samefile(b1 / rel, b2 / rel)
@@ -349,7 +349,7 @@ def test_coherence_base_et_fichiers(srv):
     sha = with_photo(c, a)
     dbf = s.data_dir / 'carnet-sync.sqlite3'
     assert check(dbf, s.data_dir, full=True)['ok']
-    owner = db.one('SELECT owner_id FROM blobs')['owner_id']
+    owner = db.one('SELECT space_id FROM blobs')['space_id']
     f = s.data_dir / 'files' / owner / sha[:2] / sha
     f.write_bytes(PNG[:-1] + b'!')  # même taille, contenu altéré
     r = check(dbf, s.data_dir, full=True)
@@ -395,6 +395,8 @@ def test_creation_interactive_du_compte(tmp_path, monkeypatch, capsys):
     assert 'créé' in out and 'secrète' not in out  # le mot de passe n'est jamais affiché
     db = Database(tmp_path / 'carnet-sync.sqlite3')
     assert db.one('SELECT login, display_name FROM users') == {'login': 'alexandre', 'display_name': 'Alexandre'}
+    # Le catalogue familial est créé avec ce compte comme administrateur.
+    assert db.one("SELECT s.name, m.role FROM spaces s JOIN space_members m ON m.space_id = s.id WHERE s.kind = 'family'") == {'name': 'Famille', 'role': 'admin'}
     with pytest.raises(SystemExit, match='existe déjà'):
         admin.main(['setup'])
     # Trop court, puis saisies différentes, trois fois : abandon, aucun compte créé.

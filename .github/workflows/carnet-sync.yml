@@ -86,6 +86,9 @@ jobs:
           printf 'essai\nEssai\n%s\n%s\n' "$PW" "$PW" | docker exec -i cs python -m app.admin setup
           printf 'essai\n%s\n' "$PW" | docker exec -i cs python -m app.admin selftest | tee /tmp/selftest.txt
           grep -q 'Connexion réussie : Essai' /tmp/selftest.txt && grep -q 'fermée : oui' /tmp/selftest.txt
+          grep -q 'Catalogue familial : Famille (administrateur, 1 membre(s))' /tmp/selftest.txt
+          docker exec cs python -m app.admin family show > /tmp/famille.txt
+          grep -q 'essai · Essai · admin' /tmp/famille.txt
           TOKEN="$(curl -sf -H 'Content-Type: application/json' -d "{\"login\":\"essai\",\"password\":\"$PW\"}" http://127.0.0.1:8090/v1/auth/login | jq -r .access_token)"
           AUTH="Authorization: Bearer $TOKEN"
           head -c 3000000 /dev/urandom > /tmp/photo.bin

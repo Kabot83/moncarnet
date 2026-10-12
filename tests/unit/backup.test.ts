@@ -68,6 +68,25 @@ describe('sauvegarde et restauration', () => {
     expect(JSON.stringify(await db.secrets.toArray())).toContain('AIza-cle-du-nouveau-telephone')
   }, 60_000)
 
+  it('Carnet Sync : espace, informations familiales et provenance conservés par une sauvegarde', async () => {
+    const info = { createdBy: { login: 'alice', name: 'Alice' }, createdAt: 1, updatedBy: null, updatedAt: 1, lockedBy: null, openConflicts: 0 }
+    const received = { login: 'bob', name: 'Bob', at: 1, transferId: 't_1' }
+    await db.recipes.bulkPut([
+      emptyRecipe({ id: 'r_fam', title: 'Commune', space: 'family', familyInfo: info }),
+      emptyRecipe({ id: 'r_perso', title: 'Privée', space: 'personal', receivedFrom: received }),
+      emptyRecipe({ id: 'r_ancienne', title: 'Sans espace (1.4.1)' }),
+    ])
+    await db.settings.put({ key: 'syncOwner', value: 'u_alice' })
+    const parsed = await readBackup(await exportBackup())
+    await reset()
+    await applyRestore(parsed, 'replace')
+    expect(await db.recipes.get('r_fam')).toMatchObject({ space: 'family', familyInfo: info })
+    expect(await db.recipes.get('r_perso')).toMatchObject({ space: 'personal', receivedFrom: received })
+    expect((await db.recipes.get('r_ancienne'))?.space).toBeUndefined() // rien n'est partagé d'office
+    // La liaison au compte n'est jamais exportée (elle appartient à l'appareil).
+    expect(await db.settings.get('syncOwner')).toBeUndefined()
+  })
+
   it('fusion : ajoute les nouvelles, garde la version la plus récente des doublons', async () => {
     const ids = await fill(5)
     const blob = await exportBackup()

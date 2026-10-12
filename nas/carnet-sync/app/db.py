@@ -1,8 +1,9 @@
 """Base SQLite de Carnet Sync.
 
-Isolation : chaque enregistrement, fichier et session appartient à un utilisateur (`owner_id`).
-Toutes les requêtes de données passent par les fonctions de ce module, qui exigent l'identifiant
-du propriétaire issu de la SESSION (jamais d'un champ envoyé par le téléphone).
+Isolation : chaque enregistrement et fichier appartient à un ESPACE (personnel ou familial).
+L'accès à un espace est calculé à chaque requête à partir de l'utilisateur de la SESSION
+(propriétaire de l'espace personnel, membre actif de la famille) — jamais d'un identifiant
+envoyé par le téléphone.
 """
 from __future__ import annotations
 
@@ -26,10 +27,12 @@ CREATE TABLE IF NOT EXISTS users (
   disabled_at INTEGER
 );
 
--- Création de compte sur invitation (aucune inscription publique).
+-- Création de compte sur invitation (aucune inscription publique). `family_id` : le nouveau compte
+-- rejoint la famille (membre) à sa création.
 CREATE TABLE IF NOT EXISTS account_invites (
   code_hash TEXT PRIMARY KEY,
   note TEXT NOT NULL,
+  family_id TEXT,
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   used_at INTEGER,
@@ -64,28 +67,84 @@ CREATE TABLE IF NOT EXISTS login_failures (
 );
 CREATE INDEX IF NOT EXISTS login_failures_key ON login_failures(key, at);
 
+-- Espaces : un espace PERSONNEL par compte (visible de lui seul) et l'espace FAMILIAL commun.
+CREATE TABLE IF NOT EXISTS spaces (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('personal', 'family')),
+  name TEXT NOT NULL,
+  owner_id TEXT REFERENCES users(id),
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS spaces_personal ON spaces(owner_id) WHERE kind = 'personal';
+
+-- Membres de la famille. Un retrait (removed_at) coupe l'accès immédiatement (vérifié à chaque requête).
+CREATE TABLE IF NOT EXISTS space_members (
+  space_id TEXT NOT NULL REFERENCES spaces(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+  joined_at INTEGER NOT NULL,
+  removed_at INTEGER,
+  PRIMARY KEY (space_id, user_id)
+);
+
 -- Données synchronisées. `rev` : numéro d'ordre global, croissant à chaque écriture.
+-- Auteur, dernier modificateur, verrou et corbeille : fixés par le serveur (jamais par le téléphone).
 CREATE TABLE IF NOT EXISTS records (
-  owner_id TEXT NOT NULL REFERENCES users(id),
+  space_id TEXT NOT NULL REFERENCES spaces(id),
   collection TEXT NOT NULL,
   id TEXT NOT NULL,
   rev INTEGER NOT NULL,
   deleted INTEGER NOT NULL DEFAULT 0,
   data TEXT,
-  client_updated_at INTEGER,
-  server_updated_at INTEGER NOT NULL,
-  PRIMARY KEY (owner_id, collection, id)
+  created_by TEXT,
+  created_at INTEGER NOT NULL,
+  updated_by TEXT,
+  updated_at INTEGER NOT NULL,
+  locked_by TEXT,
+  trashed_at INTEGER,
+  trashed_by TEXT,
+  PRIMARY KEY (space_id, collection, id)
 );
-CREATE INDEX IF NOT EXISTS records_changes ON records(owner_id, rev);
+CREATE INDEX IF NOT EXISTS records_changes ON records(space_id, rev);
 
--- Fichiers (photos) adressés par leur empreinte, PAR UTILISATEUR (aucun partage de fichier).
+-- Historique des recettes familiales (50 dernières versions par recette) : modifications,
+-- corbeille, restaurations, versions écartées par un conflit.
+CREATE TABLE IF NOT EXISTS history (
+  space_id TEXT NOT NULL,
+  collection TEXT NOT NULL,
+  id TEXT NOT NULL,
+  rev INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  data TEXT,
+  author_id TEXT,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (space_id, collection, id, rev, kind)
+);
+
+-- Modifications incompatibles à résoudre à la main : les deux versions sont conservées.
+CREATE TABLE IF NOT EXISTS conflicts (
+  id TEXT PRIMARY KEY,
+  space_id TEXT NOT NULL,
+  collection TEXT NOT NULL,
+  record_id TEXT NOT NULL,
+  author_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  items TEXT NOT NULL,
+  mine TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  resolved_by TEXT,
+  resolved_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS conflicts_open ON conflicts(space_id, status);
+
+-- Fichiers (photos) adressés par leur empreinte, PAR ESPACE.
 CREATE TABLE IF NOT EXISTS blobs (
-  owner_id TEXT NOT NULL REFERENCES users(id),
+  space_id TEXT NOT NULL REFERENCES spaces(id),
   sha256 TEXT NOT NULL,
   size INTEGER NOT NULL,
   mime TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  PRIMARY KEY (owner_id, sha256)
+  PRIMARY KEY (space_id, sha256)
 );
 
 -- Envois de recettes : contenu FIGÉ au moment de l'envoi, fichiers copiés à part.
@@ -110,7 +169,9 @@ CREATE INDEX IF NOT EXISTS transfers_sender ON transfers(sender_id, status);
 
 CREATE TABLE IF NOT EXISTS seq (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
 INSERT OR IGNORE INTO seq VALUES ('rev', 0);
+CREATE TABLE IF NOT EXISTS schema_info (version INTEGER NOT NULL);
 """
+SCHEMA_VERSION = 2
 
 
 def now() -> int:
@@ -124,9 +185,16 @@ class Database:
         self._lock = threading.RLock()
         self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._db.row_factory = sqlite3.Row
+        # Contrôle du format AVANT toute écriture (le passage en WAL modifie déjà le fichier).
+        old = self._db.execute("SELECT 1 FROM sqlite_master WHERE name = 'records'").fetchone()
+        if old and not self._db.execute("SELECT 1 FROM pragma_table_info('records') WHERE name = 'space_id'").fetchone():
+            self._db.close()
+            raise RuntimeError('Base Carnet Sync 0.1 détectée : format incompatible avec 0.2 (aucune donnée n’a été modifiée).')
         self._db.execute('PRAGMA journal_mode=WAL')
         self._db.execute('PRAGMA synchronous=FULL')  # aucune écriture confirmée sans être sur le disque
         self._db.executescript(SCHEMA)
+        if not self._db.execute('SELECT 1 FROM schema_info').fetchone():
+            self._db.execute('INSERT INTO schema_info VALUES (?)', (SCHEMA_VERSION,))
 
     @contextmanager
     def tx(self) -> Iterator[sqlite3.Connection]:

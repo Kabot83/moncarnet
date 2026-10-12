@@ -57,34 +57,47 @@ def normalize_login(login: str) -> str:
     return v
 
 
-def create_user(db: Database, login: str, display_name: str, password: str) -> str:
-    login = normalize_login(login)
-    check_password_strength(password)
+def _insert_user(c, login: str, display_name: str, pw_hash: str) -> str:
+    from .spaces import create_personal_space
+
+    if c.execute('SELECT 1 FROM users WHERE login = ?', (login,)).fetchone():
+        raise AuthError('login_taken', 'Identifiant déjà utilisé.', 409)
     uid = new_id('u')
-    with db.tx() as c:
-        if c.execute('SELECT 1 FROM users WHERE login = ?', (login,)).fetchone():
-            raise AuthError('login_taken', 'Identifiant déjà utilisé.', 409)
-        c.execute('INSERT INTO users (id, login, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)', (uid, login, display_name.strip()[:60] or login, _ph.hash(password), now()))
+    c.execute('INSERT INTO users (id, login, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)', (uid, login, display_name.strip()[:60] or login, pw_hash, now()))
+    create_personal_space(c, uid, login)
     return uid
 
 
-def create_invite(db: Database, note: str, ttl_s: int = 7 * 86400) -> str:
+def create_user(db: Database, login: str, display_name: str, password: str) -> str:
+    """Compte + son espace personnel (dans la même transaction)."""
+    login = normalize_login(login)
+    check_password_strength(password)
+    pw_hash = _ph.hash(password)
+    with db.tx() as c:
+        return _insert_user(c, login, display_name, pw_hash)
+
+
+def create_invite(db: Database, note: str, ttl_s: int = 7 * 86400, family_id: str | None = None) -> str:
     code = 'inv_' + secrets.token_urlsafe(18)
-    db.x('INSERT INTO account_invites (code_hash, note, created_at, expires_at) VALUES (?, ?, ?, ?)', (h(code), note, now(), now() + ttl_s))
+    db.x('INSERT INTO account_invites (code_hash, note, family_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)', (h(code), note, family_id, now(), now() + ttl_s))
     return code
 
 
 def register_with_invite(db: Database, code: str, login: str, display_name: str, password: str) -> str:
-    inv = db.one('SELECT * FROM account_invites WHERE code_hash = ?', (h(code or ''),))
-    if not inv or inv['used_at'] or inv['expires_at'] < now():
-        raise AuthError('invalid_invite', 'Invitation invalide, expirée ou déjà utilisée.', 403)
-    uid = create_user(db, login, display_name, password)
+    from .spaces import join_family
+
+    login = normalize_login(login)
+    check_password_strength(password)
+    pw_hash = _ph.hash(password)
     with db.tx() as c:
-        # Usage unique, même en cas de deux demandes simultanées.
-        cur = c.execute('UPDATE account_invites SET used_at = ?, used_by = ? WHERE code_hash = ? AND used_at IS NULL', (now(), uid, inv['code_hash']))
-        if cur.rowcount != 1:
-            c.execute('DELETE FROM users WHERE id = ?', (uid,))
-            raise AuthError('invalid_invite', 'Invitation déjà utilisée.', 403)
+        inv = c.execute('SELECT * FROM account_invites WHERE code_hash = ?', (h(code or ''),)).fetchone()
+        if not inv or inv['used_at'] or inv['expires_at'] < now():
+            raise AuthError('invalid_invite', 'Invitation invalide, expirée ou déjà utilisée.', 403)
+        uid = _insert_user(c, login, display_name, pw_hash)
+        # Usage unique, même en cas de deux demandes simultanées (transaction exclusive).
+        c.execute('UPDATE account_invites SET used_at = ?, used_by = ? WHERE code_hash = ?', (now(), uid, inv['code_hash']))
+        if inv['family_id']:
+            join_family(c, inv['family_id'], uid)
     return uid
 
 

@@ -203,6 +203,15 @@ export const RecipeSchema = z.object({
   cookedWeightRawG: z.number().positive().max(1e6).nullable().default(null),
   /** Publication TikTok / Instagram dont la fiche est issue (« À essayer »). */
   sourcePostId: z.string().max(64).nullable().default(null),
+  /**
+   * Synchronisation (Carnet Sync) : espace de la recette — catalogue familial ou carnet personnel.
+   * Absent : personnel (rien n'est partagé sans choix explicite).
+   */
+  space: z.enum(['family', 'personal']).optional(),
+  /** Auteur, dernier modificateur, verrou d'une recette familiale (fournis par le serveur). */
+  familyInfo: z.record(z.string(), z.unknown()).optional(),
+  /** Recette reçue d'un autre compte (« Reçue de … »). */
+  receivedFrom: z.object({ login: z.string(), name: z.string(), at: z.number(), transferId: z.string() }).optional(),
 })
 export type Recipe = z.infer<typeof RecipeSchema>
 

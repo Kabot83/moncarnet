@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import auth, sync, transfers
+from . import auth, family, spaces, sync, transfers
 from .config import VERSION, Settings
 from .db import Database
 
@@ -47,6 +47,25 @@ class PushIn(BaseModel):
 
 class MissingIn(BaseModel):
     hashes: list[str] = Field(max_length=1000)
+    space: str = Field(default='personal', max_length=10)
+
+
+class LockIn(BaseModel):
+    locked: bool
+
+
+class RevertIn(BaseModel):
+    rev: int
+
+
+class ResolveIn(BaseModel):
+    data: dict[str, Any] | None = None
+    base_rev: int | None = None
+
+
+class MoveIn(BaseModel):
+    to: str = Field(max_length=10)
+    confirm: bool = False
 
 
 class SendIn(BaseModel):
@@ -137,7 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get('/v1/me')
     def me(cur: tuple = Depends(current)) -> dict:
-        return {'user': cur[0], 'session_id': cur[1]}
+        return {'user': cur[0], 'session_id': cur[1], **spaces.family_view(db, spaces.access(db, cur[0]['id']))}
 
     @app.get('/v1/sessions')
     def sessions(cur: tuple = Depends(current)) -> list[dict]:
@@ -148,30 +167,80 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not auth.revoke(db, cur[0]['id'], sid):
             raise HTTPException(404, {'error': 'not_found', 'message': 'Session introuvable.'})
 
+    def acc(cur: tuple) -> spaces.Access:
+        return spaces.access(db, cur[0]['id'])
+
     # --- Synchronisation -----------------------------------------------------
     @app.get('/v1/sync/changes')
-    def changes(since: int = 0, page_size: int = 500, cur: tuple = Depends(current)) -> dict:
-        return sync.changes(db, cur[0]['id'], max(0, since), max(1, min(500, page_size)))
+    def changes(since: int = 0, page_size: int = 500, space: str | None = None, cur: tuple = Depends(current)) -> dict:
+        return sync.changes(db, acc(cur), max(0, since), max(1, min(500, page_size)), space)
 
     @app.post('/v1/sync/push')
     def push(body: PushIn, cur: tuple = Depends(current)) -> dict:
-        return {'results': sync.push(db, s, cur[0]['id'], body.changes)}
+        return {'results': sync.push(db, s, acc(cur), body.changes)}
 
     @app.post('/v1/blobs/missing')
     def missing(body: MissingIn, cur: tuple = Depends(current)) -> dict:
-        return {'missing': sync.missing_blobs(db, cur[0]['id'], body.hashes)}
+        return {'missing': sync.missing_blobs(db, acc(cur).space(body.space), body.hashes)}
 
     @app.put('/v1/blobs/{sha}', status_code=204)
-    async def put_blob(sha: str, request: Request, cur: tuple = Depends(current)) -> None:
+    async def put_blob(sha: str, request: Request, space: str = 'personal', cur: tuple = Depends(current)) -> None:
+        a = acc(cur)
         body = await request.body()
-        sync.put_blob(db, s, cur[0]['id'], sha, body, request.headers.get('content-type', '').split(';')[0].strip())
+        quota = s.max_user_bytes * (2 if space == 'family' else 1)
+        sync.put_blob(db, s, a.space(space), sha, body, request.headers.get('content-type', '').split(';')[0].strip(), quota)
 
     @app.get('/v1/blobs/{sha}')
     def get_blob(sha: str, cur: tuple = Depends(current)):
-        found = sync.get_blob(db, s, cur[0]['id'], sha)
+        found = sync.get_blob(db, s, acc(cur), sha)
         if not found:
             raise HTTPException(404, {'error': 'not_found', 'message': 'Fichier introuvable.'})
         return FileResponse(found[0], media_type=found[1], headers={'Cache-Control': 'private, max-age=31536000, immutable'})
+
+    # --- Catalogue familial ------------------------------------------------------
+    @app.get('/v1/family')
+    def family_info(cur: tuple = Depends(current)) -> dict:
+        return spaces.family_view(db, acc(cur))
+
+    @app.post('/v1/family/recipes/{rid}/lock')
+    def lock(rid: str, body: LockIn, cur: tuple = Depends(current)) -> dict:
+        return family.set_lock(db, acc(cur), rid, body.locked)
+
+    @app.get('/v1/family/trash')
+    def trash(cur: tuple = Depends(current)) -> list[dict]:
+        return family.trash_list(db, acc(cur))
+
+    @app.post('/v1/family/trash/{rid}/restore')
+    def restore(rid: str, cur: tuple = Depends(current)) -> dict:
+        return family.restore(db, acc(cur), rid)
+
+    @app.post('/v1/family/trash/{rid}/purge', status_code=204)
+    def purge(rid: str, cur: tuple = Depends(current)) -> None:
+        family.purge(db, acc(cur), rid)
+
+    @app.get('/v1/family/recipes/{rid}/history')
+    def history(rid: str, cur: tuple = Depends(current)) -> list[dict]:
+        return family.history_list(db, acc(cur), rid)
+
+    @app.get('/v1/family/recipes/{rid}/history/{rev}')
+    def history_version(rid: str, rev: int, kind: str = 'edit', cur: tuple = Depends(current)) -> dict:
+        return family.history_get(db, acc(cur), rid, rev, kind)
+
+    @app.post('/v1/family/recipes/{rid}/revert')
+    def revert(rid: str, body: RevertIn, cur: tuple = Depends(current)) -> dict:
+        return family.revert(db, acc(cur), rid, body.rev)
+
+    @app.get('/v1/family/conflicts')
+    def conflicts(cur: tuple = Depends(current)) -> list[dict]:
+        return family.conflicts_list(db, acc(cur))
+
+    @app.post('/v1/family/conflicts/{cid}/resolve')
+    def resolve(cid: str, body: ResolveIn, cur: tuple = Depends(current)) -> dict:
+        return family.resolve(db, acc(cur), cid, body.data, body.base_rev)
+
+    @app.post('/v1/recipes/{rid}/move')
+    def move(rid: str, body: MoveIn, cur: tuple = Depends(current)) -> dict:
+        return family.move(db, s, acc(cur), rid, body.to, body.confirm)
 
     # --- Envois de recettes ----------------------------------------------------
     @app.get('/v1/users/lookup')
@@ -185,7 +254,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post('/v1/transfers', status_code=201)
     def send(body: SendIn, cur: tuple = Depends(current)) -> dict:
         limit(f'send:{cur[0]["id"]}', 20)
-        return transfers.send(db, s, cur[0], body.recipient, body.kind, body.id, body.include_tips)
+        return transfers.send(db, s, acc(cur), cur[0], body.recipient, body.kind, body.id, body.include_tips)
 
     @app.get('/v1/transfers/inbox')
     def inbox(cur: tuple = Depends(current)) -> list[dict]:
@@ -204,14 +273,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post('/v1/transfers/{tid}/accept')
     def accept(tid: str, cur: tuple = Depends(current)) -> dict:
-        return transfers.accept(db, s, cur[0], tid)
+        return transfers.accept(db, s, acc(cur), cur[0], tid)
 
     @app.post('/v1/transfers/{tid}/decline', status_code=204)
     def decline(tid: str, cur: tuple = Depends(current)) -> None:
         transfers.decline(db, s, cur[0]['id'], tid)
 
     # --- Erreurs : messages clairs, aucun détail interne -------------------
-    for exc_type in (auth.AuthError, sync.SyncError, transfers.TransferError):
+    for exc_type in (auth.AuthError, sync.SyncError, transfers.TransferError, family.FamilyError):
         @app.exception_handler(exc_type)
         async def known(_: Request, e: Exception):
             return JSONResponse({'error': e.code, 'message': e.message}, status_code=e.status)  # type: ignore[attr-defined]

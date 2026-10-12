@@ -1,394 +1,232 @@
-# Carnet Sync — synchronisation privée de Mon Carnet
+# Carnet Sync 0.2 — catalogue familial et carnet personnel
 
-Service distinct de Carnet Media. Chaque personne a **son propre carnet** ; il n'y a ni catalogue
-familial ni fonction sociale. La seule interaction entre comptes est l'**envoi d'une recette par
-copie**, acceptée explicitement par le destinataire.
+Synchronisation privée de Mon Carnet sur le Synology. C'est un service distinct de Carnet Media.
 
-> **Statut : étape B (préparation).** Le service est testé sur PC et dans GitHub Actions. Il n'est
-> pas encore installé sur le NAS, et l'application Android n'est pas modifiée.
+- Un **catalogue familial** est commun aux membres : chaque recette ajoutée y apparaît chez tous,
+  et ses modifications sont synchronisées.
+- Chaque compte garde un **espace personnel** pour ses favoris, ses notes sur 5, ses commentaires,
+  son journal, ses collections, sa liste de courses, ses préférences, ses aliments mémorisés, ses
+  publications « À essayer » et ses recettes gardées privées.
 
-## 1. Principes
+> **Statut : étape B.** Le service est testé sur PC et dans GitHub Actions, et l'image 0.2.0 est
+> publiée. Rien n'est installé sur le NAS, et l'application Android n'est pas modifiée.
 
-| Exigence | Réalisation |
+## 1. Ce qui est partagé, ce qui reste personnel
+
+| Espace familial (tous les membres) | Espace personnel (vous seul) |
 |---|---|
-| Confidentialité | Le propriétaire de chaque donnée est **déduit de la session** côté serveur ; aucun identifiant de propriétaire n'est lu dans une requête. Chaque requête SQL est filtrée par `owner_id` et les fichiers sont rangés par compte. |
-| Aucune perte | Dexie reste la base de l'application et le serveur n'en est qu'une copie. Les conflits ne s'écrasent jamais en silence. Seules les suppressions **volontaires** sont transmises. |
-| Hors ligne | L'application ne dépend jamais du serveur ; les modifications sont envoyées au retour du réseau. |
-| Envoi par copie | Le contenu est figé à l'envoi. Une copie indépendante est créée à l'acceptation, avec ses fichiers et des identifiants déterministes, sans doublon possible. |
-| Simplicité | Un conteneur, une base SQLite et un dossier partagé. Prévu pour 3 à 4 comptes ; un seul compte au départ. |
+| Recettes complètes : titre, description, catégorie, étiquettes, temps, parts, difficulté | Favoris |
+| Ingrédients et quantités | Note sur 5 étoiles |
+| Étapes de préparation | Commentaires et notes personnelles (modifications, erreurs, idées, conservation, réchauffage) |
+| Photos des recettes | Journal de cuisine et réalisations |
+| Nutrition (associations CIQUAL/OFF, poids cuit, totaux) | Collections, liste de courses |
+| Astuces culinaires de la fiche | Préférences, aliments mémorisés |
+| Source et lien d'origine (ex. « TikTok · Chef », lien de la vidéo) | Publications TikTok / Instagram enregistrées et leurs **MP4** |
+| Auteur, dernier modificateur, historique | Recettes gardées privées, recettes reçues d'un autre compte |
 
-## 2. Données (SQLite, `data/carnet-sync.sqlite3`, mode WAL)
+- **Tri imposé par le serveur.** Une recette familiale est enregistrée en deux parties : la partie
+  commune va dans l'espace familial ; votre partie personnelle (favori, note, commentaires…) va
+  dans votre espace. C'est le **serveur** qui fait ce tri : même un téléphone défaillant ne peut
+  pas publier vos notes personnelles dans la famille.
+- **Publications TikTok et Instagram.** Une recette créée à partir d'une publication garde dans la
+  fiche commune sa source et son lien. La publication elle-même, son MP4 et le lien vers votre
+  liste « À essayer » restent personnels.
 
-- **`users`** : comptes, mots de passe hachés en **Argon2id**.
-- **`account_invites`** : codes d'invitation à usage unique, valables 7 jours. Il n'y a **aucune inscription publique**.
-- **`sessions`** : une par appareil. Elle associe :
-  - un jeton d'accès `mca_…` valable 1 h ;
-  - un jeton de renouvellement `mcr_…` valable 90 jours, remplacé à chaque usage. Si un ancien jeton est réutilisé, la session est révoquée.
-- **`login_failures`** : 5 échecs par identifiant ou 20 par adresse en 15 min entraînent une attente.
-- **`records(owner_id, collection, id, rev, deleted, data)`** : un enregistrement Dexie par ligne.
-  - `rev` est un compteur croissant qui sert de curseur de synchronisation.
-  - Une suppression est conservée comme « pierre tombale ».
-- **`blobs(owner_id, sha256)`** : photos adressées par leur contenu, **par compte**.
-- **`transfers`** : envois de recettes. L'expéditeur et le destinataire sont fixés par le serveur. Le contenu, les fichiers et le format de la miniature sont figés à l'envoi. Les invitations expirent au bout de 30 jours.
+## 2. Droits (vérifiés par le serveur à chaque requête)
 
-Collections synchronisées (liste fermée) :
-- `recipes`
-- `photos`
-- `journal`
-- `collections`
-- `shopping`
-- `posts`
-- `foods`
-- `foodMemory`
+| Action | Membre | Administrateur |
+|---|---|---|
+| Ajouter une recette au catalogue, modifier une recette commune | ✓ | ✓ |
+| Mettre à la corbeille, restaurer (30 jours) | ✓ | ✓ |
+| Revenir à une version (50 dernières), résoudre un conflit | ✓ | ✓ |
+| Verrouiller **sa** recette (seuls l'auteur et l'administrateur la modifient ensuite) | auteur | ✓ |
+| Retirer une recette du catalogue (vers son espace personnel) | auteur | ✓ |
+| Suppression définitive (depuis la corbeille) | — | ✓ |
+| Ajouter, retirer un membre, changer un rôle | — | ✓ (en ligne de commande sur le NAS) |
+| Voir l'espace personnel d'un autre | jamais | jamais |
 
-Ne sont jamais synchronisés :
-- réglages ;
-- secrets ;
-- minuteurs ;
-- sessions de cuisine ;
-- brouillons ;
-- conversations ;
-- vidéo locale des publications et état de son téléchargement.
+- **Auteur et dates.** L'auteur et le dernier modificateur sont **fixés par le serveur**, jamais
+  fournis par le téléphone.
+- **Confirmation.** Une action qui concerne les autres membres exige une confirmation explicite,
+  que le serveur vérifie lui-même. C'est le cas d'un déplacement vers le catalogue ou hors du
+  catalogue.
 
-## 3. Synchronisation (application : `src/sync/engine.ts`)
+## 3. Nouvelles recettes et déplacements
 
-**Détection des modifications.** L'application garde, pour chaque enregistrement, la révision du
-serveur et l'empreinte du contenu synchronisé, dans une base annexe `<base>~sync`. Le schéma Dexie
-1.4.1 n'est pas modifié. Tout ce qui a changé est envoyé ; cela tient lieu de file d'attente
-persistante, qui ne rate aucune modification et survit aux redémarrages comme aux coupures.
+- **Création.** Une nouvelle recette va **dans le catalogue familial par défaut**. L'éditeur
+  proposera « Garder privée ».
+- **Déplacement de votre carnet vers le catalogue.** La partie commune devient visible de tous.
+  Vos favoris et vos notes restent les vôtres. Les photos sont déplacées, ou copiées si une autre
+  de vos recettes les utilise.
+- **Déplacement du catalogue vers votre carnet.** Réservé à l'auteur ou à l'administrateur, avec
+  confirmation. Vous récupérez une recette personnelle complète. Pour les autres membres, la
+  recette passe dans la **corbeille familiale** : n'importe qui peut la restaurer pendant 30 jours.
 
-**Suppressions volontaires et pertes accidentelles.**
+## 4. Modifications simultanées : rien n'est perdu en silence
 
-- `trackDeletions(db)` est branché dès l'ouverture de la base. Chaque suppression **faite par
-  l'application et validée** laisse une trace, et seules ces suppressions sont transmises.
-- Un élément disparu **sans trace** est considéré comme perdu, que la perte d'IndexedDB soit
-  partielle ou totale ou que le système ait effacé les données. Il est **re-téléchargé**, et rien
-  n'est supprimé sur le serveur.
-- Un `clear()` (restauration, import « remplacer ») n'est pas une suppression volontaire.
-- Si l'application s'arrête entre la suppression et sa trace, l'élément revient. C'est le sens sûr.
-- **Photos.** Les suppressions de photos sont envoyées en dernier, et **le serveur refuse de
-  supprimer une photo encore utilisée** par une recette, une publication ou le journal. Cela couvre
-  le cas « recette perdue, puis nettoyage automatique des photos orphelines » : tout revient.
-
-**Conflits.** Il n'y a jamais d'écrasement silencieux : le serveur refuse toute modification basée
-sur une version périmée.
-
-| Cas | Règle |
+| Situation | Résultat |
 |---|---|
-| Recette, journal, publication | La version du serveur garde l'identifiant. Celle de l'appareil est conservée en copie « (conflit — téléphone 2) ». |
-| Collection | Union des recettes |
-| Courses, aliments, mémoire, photos | La plus récente gagne. La perdante est inscrite dans le journal des conflits. |
-| Modifié ici, supprimé ailleurs | La modification l'emporte. |
-| Supprimé ici, modifié ailleurs | La version modifiée est restaurée. |
+| Deux membres modifient des champs différents (titre, étapes, étiquettes, astuces…) | **Fusion automatique**, par le serveur |
+| Ingrédients et étapes : lignes différentes ajoutées, retirées ou modifiées | Fusion ligne par ligne |
+| **Même** ingrédient, étape ou champ modifié différemment | La version déjà enregistrée reste. L'autre est **conservée intégralement** et un **conflit à résoudre** est signalé (« 1 modification à revoir »). Vous choisissez la version à garder. |
+| Ligne supprimée par l'un, modifiée par l'autre | La ligne modifiée est gardée, et le cas est signalé à revoir. |
+| Recette mise à la corbeille par l'un, modifiée par l'autre | La modification l'emporte et la recette sort de la corbeille. |
+| Recette verrouillée modifiée par un autre membre hors ligne | Sa version devient une recette **personnelle**, « (ma version) ». |
+| Version d'origine trop ancienne (plus de 50 versions) | Tout désaccord est conservé et signalé à revoir. |
+| Votre partie personnelle, modifiée sur deux de vos appareils | Les règles habituelles s'appliquent, et la version écartée reste dans le journal des conflits. |
 
-**Données de démonstration.** Elles ne sont jamais synchronisées sans accord.
+L'historique conserve chaque version : les modifications, les passages en corbeille, les
+restaurations, les versions écartées par un conflit et les résolutions.
 
-## 4. Comptes sur un même téléphone (`src/sync/account.ts`)
+## 5. Suppressions et pertes de données
 
-| Situation | Base locale |
+- **Suppressions volontaires.** Seules les suppressions faites **par vous dans l'application**
+  sont transmises. Une recette familiale part alors en corbeille ; elle est restaurable 30 jours,
+  puis supprimée automatiquement.
+- **Pertes accidentelles.** Une recette disparue du téléphone **sans** suppression de votre part
+  est re-téléchargée. C'est le cas d'une perte de données IndexedDB, partielle ou totale, ou d'un
+  effacement par le système. Rien n'est jamais effacé sur le serveur.
+- **Photos.** Le serveur refuse de supprimer une photo encore utilisée par une recette, y compris
+  une recette en corbeille.
+- **Restauration d'une sauvegarde ZIP.** Elle ne supprime rien sur le serveur. Ce qui ne figurait
+  pas dans le ZIP revient du serveur. L'espace de chaque recette (famille ou personnel) est
+  conservé dans la sauvegarde ZIP.
+
+## 6. Retrait d'un membre : politique de conservation
+
+1. **Côté serveur, effet immédiat.** L'accès au catalogue familial est coupé, même si une session
+   est ouverte. Il n'y a plus aucune synchronisation familiale, ni lecture ni écriture.
+2. **Ses données personnelles restent à lui** : favoris, notes, journal, recettes privées.
+3. **Aucune conversion automatique.** Le catalogue familial n'est **pas** transformé en recettes
+   personnelles. Seules ses propres créations jamais envoyées lui restent, dans son carnet personnel.
+4. **Sur ses appareils.** À la prochaine connexion, l'application **retire de l'appareil** les
+   recettes et photos familiales. Le serveur annonce explicitement le retrait, ce qui évite qu'une
+   simple panne ne déclenche ce nettoyage.
+5. **Limite à connaître.** Une copie déjà téléchargée **ne peut pas être effacée à distance de
+   façon garantie**. Ce retrait au mieux ne s'applique pas dans ces cas :
+   - un appareil qui ne se reconnecte jamais ;
+   - une sauvegarde ZIP déjà exportée ;
+   - une capture d'écran ;
+   - une copie faite autrement.
+6. Un membre **réintégré** retrouve le catalogue à sa synchronisation suivante.
+
+## 7. Première connexion : migration de vos recettes 1.4.1
+
+1. L'application liste les recettes du téléphone. **Aucune n'est présélectionnée** ; un bouton
+   « Tout sélectionner » est proposé. Les recettes de démonstration sont à part et ne sont jamais
+   envoyées sans votre accord.
+2. Une **sauvegarde complète** est faite **avant** tout envoi. Si elle échoue, la migration est
+   annulée et rien n'est envoyé.
+3. Les recettes cochées vont au catalogue familial, les autres restent personnelles. Les
+   favoris, notes, journal, collections et courses vont dans votre espace personnel.
+4. La synchronisation reprend où elle s'était arrêtée en cas de coupure, sans doublon. Ensuite,
+   chaque élément est vérifié par rapport au serveur, photos comprises.
+5. **Aucune donnée locale n'est supprimée**, ni pendant ni après.
+
+## 8. Sécurité, comptes, sauvegardes
+
+**Comptes**
+- Les mots de passe sont hachés en Argon2id.
+- Les sessions sont renouvelables et révocables par appareil.
+- Les tentatives de connexion sont limitées.
+- Il n'y a aucune inscription publique : les comptes sont créés en ligne de commande, ou par une
+  invitation à usage unique, éventuellement familiale.
+- Le premier compte et la famille sont créés **en mode interactif** : le mot de passe est saisi deux
+  fois et masqué, jamais généré ni affiché.
+
+**Conteneur**
+- Il tourne sous un utilisateur non-root, avec un système de fichiers en lecture seule et sans
+  capacités système.
+- La mémoire et le nombre de processus sont plafonnés. Il n'y a **aucune limite CPU**, car le noyau
+  Synology ne gère pas l'ordonnanceur CFS.
+- Il écoute **uniquement sur 127.0.0.1** : seul le reverse proxy DSM, en HTTPS sur le port 8445,
+  le joint. La base SQLite n'est jamais exposée.
+
+**Sauvegardes nocturnes (03:15)**
+- La base est copiée par l'**API de sauvegarde SQLite** : l'instantané est cohérent même en mode
+  WAL, sans arrêter le service.
+- Toutes les photos des deux espaces sont sauvegardées, avec un manifeste SHA-256 relu avant
+  validation.
+- L'historique garde 14 nuits et 8 semaines. Une photo inchangée est reliée à la version
+  précédente, sans copie en double.
+- La corbeille de plus de 30 jours est vidée par la même tâche.
+- Le service vérifie la **cohérence entre la base et les fichiers photos** (`check --full`).
+
+**Restauration**
+- La restauration à blanc (`restore-test`) se fait dans un dossier temporaire, est contrôlée, puis
+  effacée.
+- La restauration réelle (`restore`) s'applique au redémarrage du conteneur. L'ancienne base est
+  conservée à côté, jamais effacée ; en cas d'échec, elle est remise en place.
+
+### Commandes (Container Manager → Conteneur → carnet-sync → Terminal)
+
+| Commande | Rôle |
 |---|---|
-| Sans compte (comme en 1.4.1) | `mon-carnet`, inchangée |
-| Premier compte | Reprend `mon-carnet`, après résumé et accord ; rien n'est déplacé. |
-| Autre compte | `mon-carnet@<compte>`, séparée |
-| Déconnexion | Rien n'est effacé. L'application ouvre `mon-carnet~hors-compte`, une base vide. |
+| `python -m app.admin setup` | Votre compte, puis le catalogue familial dont vous êtes administrateur |
+| `python -m app.admin selftest` | Essai réel : connexion, famille, lecture, déconnexion |
+| `python -m app.admin family show` | Membres et rôles |
+| `python -m app.admin family add <login>` / `remove <login>` / `role <login> admin\|member` | Gestion des membres |
+| `python -m app.admin user create` | Autre compte, en mode interactif, puis `family add` |
+| `python -m app.admin invite create --family` | Invitation à usage unique, valable 7 jours, qui fait rejoindre la famille |
+| `python -m app.admin backup` / `status` / `check --full` | Sauvegarde immédiate, état, cohérence |
+| `python -m app.admin verify <dossier>` / `restore-test <dossier>` / `restore <dossier>` | Vérification et restauration |
 
-**Verrou supplémentaire.**
-- Chaque base locale est **liée à un compte** par `bindToAccount()`, appelé après l'accord de
-  migration.
-- Avant tout échange, le moteur vérifie que le compte de la session est bien celui de la base.
-- Sinon, il refuse : les données d'une personne ne peuvent pas partir dans le compte d'une autre,
-  même en cas d'erreur de l'application.
-- Sans liaison, rien n'est synchronisé.
+## 9. Installation sur le DS920+ (DSM 7.4.1)
 
-**Jetons.** À l'étape C, ils seront chiffrés par l'Android Keystore, avec une clé distincte de
-Carnet Media. Ils ne seront jamais stockés dans IndexedDB ni dans les sauvegardes.
+Nous la ferons **une étape à la fois**, à commencer par le réseau local. Carnet Media, son port 8444
+et son dossier ne sont pas touchés, et aucun port n'est ouvert sur la Freebox.
 
-## 5. Migration des données 1.4.1
-
-1. L'application affiche un résumé, par exemple « 42 recettes, 120 photos… ». Les données de
-   démonstration sont comptées à part.
-2. Vous confirmez ; c'est à ce moment que la base est liée au compte.
-3. La synchronisation reprend où elle s'était arrêtée, sans doublon.
-4. `verify()` compare chaque élément local au serveur, photos comprises.
-5. Les données locales et les copies de sécurité 1.4.1 ne sont jamais supprimées.
-
-## 6. Envoi d'une recette
-
-**Recherche du destinataire.** Elle se fait par identifiant **exact**, sans liste ; le nom affiché
-sert de confirmation.
-
-**Lecture de la recette.** Le serveur lit la recette dans l'espace synchronisé de l'expéditeur. Il
-est donc impossible d'envoyer la recette de quelqu'un d'autre ou de se faire passer pour un autre
-expéditeur.
-
-**Ce qui est transmis :**
-- titre et description ;
-- catégorie et étiquettes ;
-- temps et nombre de parts ;
-- difficulté ;
-- source ;
-- ingrédients, avec leurs quantités et leur nutrition ;
-- étapes ;
-- photos ;
-- astuces, seulement si vous cochez la case.
-
-**Ce qui n'est jamais transmis :**
-- les autres notes ;
-- le journal ;
-- les favoris, notes et réalisations ;
-- les collections ;
-- les informations de compte.
-
-**Une copie figée.** Le contenu est figé à l'envoi. Si l'original est modifié ou supprimé ensuite,
-la copie reçue ne change pas.
-
-**Réception.** Le destinataire choisit « Ajouter à mon carnet » ou « Refuser ». L'invitation
-l'attend 30 jours, même s'il est hors ligne. S'il accepte :
-- une copie indépendante est créée dans **son** espace, avec la mention « Reçue de … » ;
-- une seconde acceptation ne crée pas de doublon.
-
-**Publications TikTok et Instagram.** Seuls le lien et les métadonnées sont transmis, jamais le MP4.
-Si le destinataire utilise Carnet Media, la vidéo est servie par la bibliothèque du NAS, sans
-nouveau téléchargement.
-
-## 7. Sauvegardes (distinctes de la synchronisation)
-
-**Fonctionnement automatique.** Chaque nuit à 03:15, dans `backups/carnet-sync-AAAAMMJJ-HHMMSS/` :
-- **la base** est copiée par l'**API de sauvegarde SQLite**. Cet instantané est cohérent, y
-  compris en mode WAL, et le service n'est pas arrêté ;
-- **les photos** sont sauvegardées : exactement celles que référence cet instantané, plus les
-  fichiers des invitations en attente ;
-- **l'espace disque** n'est pas multiplié : une photo inchangée est reliée par lien physique à la
-  version précédente, ce qui garde chaque version complète ;
-- **un manifeste SHA-256** liste chaque fichier. Tout est relu et contrôlé avant que la sauvegarde
-  ne devienne visible : une sauvegarde visible est toujours complète.
-
-**Historique.** Le service garde les 14 dernières nuits, plus une version par semaine sur 8
-semaines. Hyper Backup en conserve d'autres sur un autre support.
-
-**Suivi.** Le résultat est écrit dans `backups/etat.json` et dans le journal du conteneur.
-
-**Commandes, depuis le terminal du conteneur :**
-
-| Commande | Effet |
+| Étape | Contenu |
 |---|---|
-| `python -m app.admin backup` | Sauvegarde immédiate |
-| `python -m app.admin status` | Dernier résultat et versions disponibles |
-| `python -m app.admin check --full` | Cohérence de la base et des fichiers photos (empreintes relues) |
-| `python -m app.admin verify <dossier>` | Relit une sauvegarde |
-| `python -m app.admin restore-test <dossier>` | **Restauration à blanc** : restaure dans un dossier temporaire, contrôle, efface. Rien n'est modifié. |
-| `python -m app.admin restore <dossier>` | Vérifie la sauvegarde puis programme sa restauration. Elle s'applique au **redémarrage** du conteneur. L'ancienne base est conservée dans `data-avant-restauration-…`, jamais effacée. En cas d'échec, l'ancienne base est remise en place. |
+| 1 | Compte technique `carnet-sync`, sans aucun droit de connexion |
+| 2 | Dossier partagé `carnet-sync`, distinct de Carnet Media |
+| 3 | Numéro (UID) du compte technique, via le Planificateur de tâches (sans SSH) |
+| 4 | Projet Container Manager à partir de `docker-compose.yml` (image `ghcr.io/kabot83/carnet-sync:0.2.0`) |
+| 5 | `setup` : votre compte, puis le catalogue familial ; puis `selftest`, `backup`, `restore-test` |
+| 6 | Reverse proxy HTTPS sur `carnetmedia.synology.me:8445` vers `localhost:8090`, avec le certificat Let's Encrypt existant |
+| 7 | Tests sur le réseau local depuis le PC (`curl.exe --resolve …`) |
+| 8 | Hyper Backup du dossier `carnet-sync/backups` uniquement |
 
-## 8. Installation sur le DS920+ (DSM 7.4.1) — réseau local d'abord
+## 10. Tests
 
-Rien n'est modifié pour Carnet Media, son port 8444 ni son dossier. Aucun port n'est ouvert sur la
-Freebox à cette étape.
-
-### Étape 1 — Compte technique dédié
-
-**Panneau de configuration → Utilisateur et groupe → Utilisateur → Créer.**
-
-1. Renseignez le compte :
-   - Nom : `carnet-sync`
-   - Description : `Compte technique Carnet Sync (aucune connexion)`
-   - Mot de passe : une longue suite aléatoire. Vous n'en aurez jamais besoin.
-   - Cochez « Ne pas autoriser l'utilisateur à modifier le mot de passe du compte ».
-2. Groupe : `users` uniquement.
-3. Autorisations des dossiers partagés : **Pas d'accès** partout.
-4. Applications : **Refuser** pour toutes (DSM, File Station, SMB, FTP…).
-5. Terminé.
-
-### Étape 2 — Dossier partagé distinct
-
-**Panneau de configuration → Dossier partagé → Créer.**
-
-1. Renseignez le dossier :
-   - Nom : `carnet-sync`
-   - Emplacement : Volume 1
-   - Cochez « Masquer ce dossier partagé dans "Mes emplacements réseau" ».
-   - Décochez la corbeille.
-2. Chiffrement : non.
-3. Paramètres avancés : cochez « Activer la somme de contrôle des données pour une intégrité avancée ».
-4. Autorisations :
-   - `carnet-sync` : **Lecture/Écriture** ;
-   - votre compte administrateur : **Lecture/Écriture**, pour consulter les sauvegardes ;
-   - tous les autres : aucun accès.
-
-Les sous-dossiers `data` et `backups` sont créés automatiquement par le service.
-
-### Étape 3 — Numéro (UID) du compte technique, sans SSH
-
-1. **Panneau de configuration → Planificateur de tâches → Créer → Tâche planifiée → Script défini
-   par l'utilisateur.**
-   - Général :
-     - Nom : `UID carnet-sync`
-     - Utilisateur : `root`
-     - **Décochez « Activé »**.
-   - Paramètres de tâche, Script : `id carnet-sync > /volume1/carnet-sync/uid.txt`
-2. Sélectionnez la tâche → **Exécuter**.
-3. Dans File Station, ouvrez `carnet-sync/uid.txt`. Il contient par exemple
-   `uid=1030(carnet-sync) gid=100(users)`. **Notez le premier nombre.**
-4. Supprimez la tâche et le fichier `uid.txt`.
-
-### Étape 4 — Projet Container Manager
-
-**Container Manager → Projet → Créer.**
-
-1. Renseignez le projet :
-   - Nom : `carnet-sync`
-   - Chemin : `/carnet-sync`
-   - Source : « Créer docker-compose.yml »
-2. Collez le contenu de `docker-compose.yml`, en remplaçant **`1030`** par l'UID noté à
-   l'étape 3 (gardez `:100`).
-3. Suivant. Ne configurez **pas** de portail Web Station.
-4. Terminé : l'image `ghcr.io/kabot83/carnet-sync:0.1.0` est téléchargée et le conteneur démarre.
-5. **Conteneur → carnet-sync → Journal** doit afficher :
-   - `Carnet Sync 0.1.0`
-   - `Sauvegarde nocturne programmée à 03:15`
-
-### Étape 5 — Votre compte, en mode interactif
-
-Ouvrez DSM en **HTTPS** (port 5001) pour cette étape.
-
-**Container Manager → Conteneur → `carnet-sync` → Action → Ouvrir le terminal → Créer.**
-Dans le terminal qui s'ouvre :
-
-1. Créez votre compte :
-
-   ```
-   python -m app.admin setup
-   ```
-
-   Saisissez votre identifiant, votre nom affiché, puis votre mot de passe deux fois. Il fait
-   **au moins 10 caractères** ; une phrase est idéale. Rien ne s'affiche pendant la saisie, et il
-   n'est ni affiché, ni enregistré en clair, ni journalisé.
-2. Essayez la connexion :
-
-   ```
-   python -m app.admin selftest
-   ```
-
-   La commande vérifie le service et le refus sans session. Elle vous connecte, lit le carnet, puis
-   ferme la session d'essai.
-3. Faites une première sauvegarde, puis une restauration à blanc :
-
-   ```
-   python -m app.admin backup
-   python -m app.admin status
-   python -m app.admin restore-test /srv/carnet/backups/<nom affiché par status>
-   ```
-
-### Étape 6 — Accès HTTPS par le reverse proxy (port 8445)
-
-1. **Panneau de configuration → Portail de connexion → Avancé → Proxy inversé → Créer.**
-   - Nom : `Carnet Sync`
-   - Source :
-     - Protocole : HTTPS
-     - Nom d'hôte : `carnetmedia.synology.me`
-     - Port : **8445**
-   - Destination :
-     - Protocole : HTTP
-     - Nom d'hôte : `localhost`
-     - Port : **8090**
-   - Ne touchez pas à la règle existante de Carnet Media (8444).
-2. **Panneau de configuration → Sécurité → Certificat → Paramètres.** Pour le service
-   `carnetmedia.synology.me:8445`, choisissez le certificat Let's Encrypt `carnetmedia.synology.me`
-   existant.
-3. Si le pare-feu DSM est activé, autorisez le port 8445 **depuis le réseau local seulement**.
-4. Sur la **Freebox** : rien pour l'instant.
-
-### Étape 7 — Test sur le réseau local, depuis un PC Windows de la maison
-
-Dans PowerShell, en remplaçant `192.168.1.20` par l'adresse locale du NAS :
-
-```
-curl.exe --resolve carnetmedia.synology.me:8445:192.168.1.20 https://carnetmedia.synology.me:8445/v1/health
-```
-
-Résultat attendu : `{"status":"ok","service":"carnet-sync"}`, sans avertissement de certificat.
-
-```
-curl.exe -s -o NUL -w "%{http_code}`n" --resolve carnetmedia.synology.me:8445:192.168.1.20 https://carnetmedia.synology.me:8445/v1/sync/changes
-```
-
-Résultat attendu : `401`, c'est-à-dire accès refusé sans session.
-
-Photos de 3 Mo à travers le proxy :
-
-```
-[IO.File]::WriteAllBytes("$env:TEMP\essai.bin", (New-Object byte[] 3000000))
-curl.exe -s -o NUL -w "%{http_code}`n" --resolve carnetmedia.synology.me:8445:192.168.1.20 -X PUT -H "Content-Type: image/jpeg" --data-binary "@$env:TEMP\essai.bin" https://carnetmedia.synology.me:8445/v1/blobs/0000000000000000000000000000000000000000000000000000000000000000
-```
-
-Résultat attendu : `401`. Le proxy laisse passer le fichier et le service le refuse faute de
-session. Le résultat `413` signalerait une taille limitée par le proxy.
-
-Carnet Media doit toujours répondre sur `https://carnetmedia.synology.me:8444/v1/health`.
-
-### Étape 8 — Hyper Backup
-
-**Hyper Backup → Créer → Tâche de sauvegarde de données.**
-
-1. Destination : disque USB, autre NAS ou C2.
-2. Dossier : cochez **`carnet-sync/backups` uniquement**. N'incluez **pas** `data`, la base en
-   service ; les sauvegardes nocturnes en sont des copies cohérentes.
-3. Horaire : chaque jour à **04:30**, après la sauvegarde de 03:15.
-4. Cochez « Activer la vérification de l'intégrité des sauvegardes ».
-5. Rotation : « Smart Recycle », 30 versions par exemple.
-
-### Restauration en cas de besoin
-
-1. **Conteneur → Terminal.** Les deux premières commandes permettent de choisir puis de contrôler la version :
-
-   ```
-   python -m app.admin status
-   python -m app.admin restore-test /srv/carnet/backups/<version>
-   python -m app.admin restore /srv/carnet/backups/<version>
-   ```
-
-2. **Action → Redémarrer.** Le journal indique « Restauration appliquée ». L'ancienne base reste
-   dans `carnet-sync/data-avant-restauration-…`.
-
-Si le NAS lui-même est perdu :
-1. Restaurez le dossier `backups` avec Hyper Backup.
-2. Refaites les étapes 1 à 4.
-3. Lancez `restore` puis redémarrez le conteneur.
-
-## 9. Tests
-
-- **`nas/carnet-sync/tests/test_server.py`** (17 tests) couvre :
-  - l'isolation et les tentatives d'accès croisé ;
+- **`tests/test_server.py`** (17 tests) couvre :
+  - l'isolation et les accès croisés ;
   - les comptes et les sessions ;
-  - la création interactive du compte (mot de passe jamais affiché) ;
-  - les conflits et l'idempotence ;
-  - les envois de recettes : copie indépendante, notes privées, format de la miniature, refus, expiration ;
-  - le refus de supprimer une photo encore utilisée ;
-  - la sauvegarde pendant des écritures simultanées (WAL), avec liens physiques ;
-  - la vérification et la restauration à blanc ;
-  - la restauration au redémarrage, l'ancienne base étant conservée ;
-  - la rotation des versions ;
+  - la création interactive du compte ;
+  - les conflits ;
+  - les envois de recettes ;
+  - les sauvegardes WAL avec liens physiques ;
+  - la vérification, la restauration à blanc, la restauration au redémarrage et la rotation ;
   - la cohérence entre la base et les fichiers ;
   - la tâche nocturne.
-- **`tests/unit/sync-live.test.ts`** (11 tests, de bout en bout, moteur de l'application et vrai
-  serveur) couvre :
-  - la migration non liée, puis liée, interrompue puis reprise ;
-  - deux appareils sur le même compte ;
-  - la modification hors ligne et les conflits ;
-  - la fusion de collections ;
-  - les pertes partielles et totales, y compris le nettoyage des photos orphelines ;
+- **`tests/test_family.py`** (18 tests) couvre :
+  - le catalogue commun et les données personnelles jamais partagées ;
+  - les non-membres et les tentatives d'usurpation ;
+  - la règle d'un identifiant par espace ;
+  - la fusion des champs indépendants ;
+  - le même ingrédient modifié, avec résolution manuelle ;
+  - la version d'origine trop ancienne ;
+  - la corbeille, la restauration, la suppression définitive et le vidage à 30 jours ;
+  - la modification contre la mise en corbeille ;
+  - l'historique et le retour à une version ;
+  - le verrou ;
+  - les déplacements dans les deux sens ;
+  - le retrait d'un membre ;
+  - l'invitation familiale ;
+  - l'envoi depuis le catalogue ;
+  - la sauvegarde ;
+  - le refus d'une base 0.1.
+- **`tests/unit/sync-live.test.ts`** (21 scénarios) fait tourner le moteur de l'application contre
+  le vrai serveur. Il couvre :
+  - la migration avec choix des recettes, sauvegarde préalable, coupure et reprise ;
+  - deux appareils ;
+  - le travail hors ligne et les conflits ;
+  - les pertes d'IndexedDB ;
   - les suppressions volontaires ;
   - le nouveau téléphone ;
-  - le jeton expiré ;
-  - le second compte, avec refus du mauvais compte ;
-  - l'envoi, le refus et la double acceptation.
-- **GitHub Actions (`carnet-sync.yml`)** exécute les deux suites. Il construit ensuite l'image et
-  vérifie le conteneur dans les conditions du NAS :
-  - utilisateur non-root, système de fichiers en lecture seule, capacités retirées ;
-  - aucun accès sans session ;
-  - compte interactif et `selftest` ;
-  - photo de 3 Mo ;
-  - sauvegarde, `check --full`, `verify` et restauration à blanc ;
-  - restauration réelle au redémarrage ;
-  - aucun secret dans le journal.
-
-  L'image n'est publiée que depuis `master`, ou sur demande explicite.
+  - côté famille : apparition chez les membres, données personnelles séparées, « Garder privée »,
+    fusion automatique, conflit manuel, corbeille, verrou, déplacements, publication TikTok sans
+    MP4, sauvegarde ZIP aller-retour, retrait d'un membre ;
+  - le second compte et les envois.
+- **GitHub Actions** exécute ces suites puis vérifie l'image. Il démarre aussi le conteneur avec le
+  `docker-compose.yml` réel, sans limite CPU et avec toutes les protections actives.

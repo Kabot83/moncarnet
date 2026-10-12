@@ -4,7 +4,8 @@
  *
  *   SYNC_LIVE_PY=<python avec fastapi, uvicorn, argon2-cffi> npx vitest run tests/unit/sync-live.test.ts
  *
- * Chaque « téléphone » est une base Dexie distincte ; deux comptes : alice et bob.
+ * Chaque « téléphone » est une base Dexie distincte. Comptes : alice (administratrice de la
+ * famille) et carol (membre) partagent le catalogue familial ; bob est hors famille.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -14,8 +15,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { CarnetDB, db as legacyDb } from '@/db/db'
 import { seedDemoData } from '@/db/seed'
 import { emptyIngredient, emptyRecipe, emptyStep } from '@/services/recipes'
-import { httpSyncApi, type SyncApi, type TokenSource } from '@/sync/api'
+import { httpSyncApi, type PushChange, type SyncApi, type TokenSource } from '@/sync/api'
 import { SyncEngine } from '@/sync/engine'
+import { MigrationError, migrationCandidates, runInitialMigration } from '@/sync/migration'
+import { applyRestore, exportBackup, readBackup } from '@/services/backup'
 import { localDbName, migrationSummary, signIn, signOut, SIGNED_OUT_DB, type DeviceBinding } from '@/sync/account'
 
 const PY = process.env.SYNC_LIVE_PY
@@ -25,7 +28,16 @@ const SERVER_DIR = resolve(__dirname, '../../nas/carnet-sync')
 let server: ChildProcess | null = null
 let dataDir = ''
 
-const PASSWORDS: Record<string, string> = { alice: 'mot-de-passe-alice', bob: 'mot-de-passe-bob1' }
+const PASSWORDS: Record<string, string> = { alice: 'mot-de-passe-alice', bob: 'mot-de-passe-bob1', carol: 'mot-de-passe-carol' }
+let env: NodeJS.ProcessEnv = {}
+
+/** Commande d'administration du serveur (comme dans le terminal du conteneur). */
+function admin(code: string) {
+  const r = spawnSync(PY!, ['-c', `from app import auth, spaces; from app.config import Settings; from app.db import Database
+s = Settings.from_env(); db = Database(s.data_dir / 'carnet-sync.sqlite3')
+${code}`], { cwd: SERVER_DIR, env })
+  expect(r.status, r.stderr?.toString()).toBe(0)
+}
 
 async function session(login: string, device: string): Promise<{ api: SyncApi; tokens: TokenSource & { refreshCount: number; spoil(): void }; userId: string }> {
   const r = await fetch(`${BASE}/v1/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login, password: PASSWORDS[login], device }) })
@@ -97,11 +109,9 @@ const bytes = async (b: Blob) => Buffer.from(await b.arrayBuffer()).toString('he
 describe.skipIf(!PY)('Carnet Sync — bout en bout (serveur local réel)', () => {
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'carnet-sync-'))
-    const env = { ...process.env, SYNC_DATA_DIR: dataDir, SYNC_PORT: String(PORT), SYNC_HOST: '127.0.0.1', PYTHONDONTWRITEBYTECODE: '1', PYTHONIOENCODING: 'utf-8' }
-    const mk = spawnSync(PY!, ['-c', `from app import auth; from app.config import Settings; from app.db import Database
-s = Settings.from_env(); db = Database(s.data_dir / 'carnet-sync.sqlite3')
-auth.create_user(db, 'alice', 'Alice', '${PASSWORDS.alice}'); auth.create_user(db, 'bob', 'Bob', '${PASSWORDS.bob}')`], { cwd: SERVER_DIR, env })
-    expect(mk.status, mk.stderr?.toString()).toBe(0)
+    env = { ...process.env, SYNC_DATA_DIR: dataDir, SYNC_PORT: String(PORT), SYNC_HOST: '127.0.0.1', SYNC_SCHEDULER: '0', PYTHONDONTWRITEBYTECODE: '1', PYTHONIOENCODING: 'utf-8' }
+    admin(`for u, n in (('alice', 'Alice'), ('bob', 'Bob'), ('carol', 'Carol')): auth.create_user(db, u, n, 'mot-de-passe-' + u + ('1' if u == 'bob' else ''))
+spaces.create_family(db, 'Famille Casta', 'alice'); spaces.add_member(db, 'carol')`)
     server = spawn(PY!, ['-m', 'app.serve'], { cwd: SERVER_DIR, env, stdio: 'ignore' })
     for (let i = 0; i < 100; i++) {
       try {
@@ -128,7 +138,7 @@ auth.create_user(db, 'alice', 'Alice', '${PASSWORDS.alice}'); auth.create_user(d
   let phone1: SyncEngine
   let alice1: Awaited<ReturnType<typeof session>>
 
-  it('14. migration des données 1.4.1 : résumé, accord, sans démonstration, sans doublon, reprise', async () => {
+  it('14. migration des données 1.4.1 : choix des recettes partagées, sauvegarde d’abord, sans doublon, reprise', async () => {
     await seedDemoData()
     await addPhoto(legacyDb, 'ph_soupe', 1)
     await legacyDb.recipes.put(soupe('r_soupe', 'ph_soupe'))
@@ -139,16 +149,29 @@ auth.create_user(db, 'alice', 'Alice', '${PASSWORDS.alice}'); auth.create_user(d
     const summary = await migrationSummary(legacyDb)
     expect(summary.personal).toMatchObject({ recipes: 2, photos: 1, journal: 1, collections: 1 })
     expect(summary.demo.recipes).toBeGreaterThan(0)
+    // Écran de choix : les recettes de l'appareil, AUCUNE présélectionnée, démonstration à part.
+    const cands = await migrationCandidates(legacyDb)
+    expect(cands.recipes.map((r) => [r.id, r.space])).toEqual([['r_soupe', null], ['r_tarte', null]])
+    expect(cands.demo).toBe(summary.demo.recipes)
 
     alice1 = await session('alice', 'téléphone 1')
     binding = signIn(binding, alice1.userId)
     expect(localDbName(binding)).toBe('mon-carnet') // la base existante est reprise telle quelle
 
+    // Aucune synchronisation tant que la migration n'est pas confirmée.
+    await expect(new SyncEngine(legacyDb, alice1.api).sync()).rejects.toMatchObject({ code: 'not_bound' })
+    // Sauvegarde préalable impossible : migration annulée, rien n'est lié ni envoyé.
+    await expect(runInitialMigration(new SyncEngine(legacyDb, alice1.api), { share: ['r_soupe'], backup: async () => { throw new Error('disque plein') } })).rejects.toBeInstanceOf(MigrationError)
+    expect(await legacyDb.settings.get('syncOwner')).toBeUndefined()
+    expect((await alice1.api.changes(0)).changes).toEqual([])
+
     // Coupure réseau au milieu : le serveur a reçu un envoi mais la réponse est perdue.
+    const events: string[] = []
     let cut = true
     const flaky: SyncApi = {
       ...alice1.api,
       push: async (c) => {
+        events.push('envoi')
         const r = await alice1.api.push(c)
         if (cut) {
           cut = false
@@ -157,23 +180,27 @@ auth.create_user(db, 'alice', 'Alice', '${PASSWORDS.alice}'); auth.create_user(d
         return r
       },
     }
-    const first = new SyncEngine(legacyDb, flaky, { deviceLabel: 'téléphone 1' })
-    // Aucune synchronisation tant que l'utilisateur n'a pas confirmé la migration.
-    await expect(first.sync()).rejects.toMatchObject({ code: 'not_bound' })
-    expect((await alice1.api.changes(0)).changes).toEqual([])
-    await first.bindToAccount() // accord donné après le résumé
-    await expect(first.sync()).rejects.toThrow('Failed to fetch')
+    await expect(runInitialMigration(new SyncEngine(legacyDb, flaky, { deviceLabel: 'téléphone 1' }), { share: ['r_soupe'], backup: async () => void events.push('sauvegarde') })).rejects.toThrow('Failed to fetch')
+    expect(events[0]).toBe('sauvegarde') // la sauvegarde précède tout envoi
     phone1 = new SyncEngine(legacyDb, alice1.api, { deviceLabel: 'téléphone 1' })
     await phone1.sync() // reprise
-    const check = await phone1.verify()
-    expect(check).toMatchObject({ ok: true, checked: 5 })
+    expect(await phone1.verify()).toMatchObject({ ok: true, checked: 5 })
 
-    // Aucun doublon, aucune donnée de démonstration sur le serveur.
+    // Partagée : la soupe (et sa photo). Personnel : la tarte, le journal, la collection, ses favoris.
     const all = await alice1.api.changes(0)
-    expect(all.changes.map((c) => `${c.collection}/${c.id}`).sort()).toEqual(['collections/c_hiver', 'journal/j_1', 'photos/ph_soupe', 'recipes/r_soupe', 'recipes/r_tarte'])
-    expect((await phone1.sync()).pushed).toBe(0)
+    expect(all.changes.map((c) => `${c.space}:${c.collection}/${c.id}`).sort()).toEqual([
+      'family:photos/ph_soupe', 'family:recipes/r_soupe',
+      'personal:collections/c_hiver', 'personal:journal/j_1', 'personal:recipeMeta/r_soupe', 'personal:recipes/r_tarte',
+    ])
+    const commune = all.changes.find((c) => c.collection === 'recipes' && c.id === 'r_soupe')!.data!
+    expect(commune.favorite).toBeUndefined()
+    expect(commune.notes).toEqual({ tips: 'Un trait de vin blanc' })
+    const perso = all.changes.find((c) => c.collection === 'recipeMeta')!.data!
+    expect(perso).toMatchObject({ favorite: true, rating: 5, notes: { modifications: 'Mon secret : du porto' } })
+    expect((await phone1.sync()).pushed).toBe(0) // aucun doublon
     // Les données locales (démonstration comprise) sont toujours là.
     expect(await legacyDb.recipes.filter((r) => r.isDemo).count()).toBe(summary.demo.recipes)
+    expect((await legacyDb.recipes.get('r_soupe'))?.favorite).toBe(true)
   })
 
   let phone2: CarnetDB
@@ -296,6 +323,199 @@ auth.create_user(db, 'alice', 'Alice', '${PASSWORDS.alice}'); auth.create_user(d
     alice1.tokens.spoil()
     await phone1.sync()
     expect(alice1.tokens.refreshCount).toBe(1)
+  })
+
+  // --- Catalogue familial (alice + carol) -------------------------------------------
+
+  let carol: Awaited<ReturnType<typeof session>>
+  let carolDb: CarnetDB
+  let carolSync: SyncEngine
+  let carolNet: ReturnType<typeof offline>
+  const gratin = () =>
+    emptyRecipe({
+      id: 'r_gratin', title: 'Gratin dauphinois', space: 'family',
+      ingredients: [emptyIngredient({ id: 'i1', name: 'pommes de terre', quantity: 1000, unit: 'g' }), emptyIngredient({ id: 'i2', name: 'crème', quantity: 40, unit: 'cl' })],
+      steps: [emptyStep({ id: 's1', text: 'Éplucher' }), emptyStep({ id: 's2', text: 'Cuire 1 h' })],
+    })
+
+  it('famille : le catalogue apparaît chez les membres, les données personnelles restent séparées', async () => {
+    carol = await session('carol', 'téléphone de Carol')
+    carolDb = new CarnetDB('telephone-carol')
+    carolNet = offline(carol.api)
+    carolNet.online = true
+    carolSync = new SyncEngine(carolDb, carolNet, { deviceLabel: 'téléphone de Carol' })
+    await carolSync.bindToAccount()
+    await carolSync.sync()
+    const r = await carolDb.recipes.get('r_soupe')
+    expect(r?.title).toBe('Soupe à l’oignon')
+    expect(r?.notes).toMatchObject({ tips: 'Un trait de vin blanc', modifications: '' }) // astuces partagées, notes privées non
+    expect([r?.favorite, r?.rating]).toEqual([false, 0])
+    expect((r?.familyInfo as { createdBy: { login: string } }).createdBy.login).toBe('alice')
+    expect(await bytes((await carolDb.photos.get('ph_soupe'))!.blob)).toBe(await bytes(png(1)))
+    expect(await carolDb.recipes.get('r_tarte')).toBeUndefined() // personnelle d'Alice
+    expect(await carolDb.journal.count()).toBe(0)
+
+    // Favori et note de Carol : à elle seule.
+    await carolDb.recipes.update('r_soupe', { favorite: true, notes: { ...r!.notes, modifications: 'Moins de beurre' } })
+    await carolSync.sync()
+    await phone1.sync()
+    const a = await legacyDb.recipes.get('r_soupe')
+    expect(a?.notes.modifications).toBe('Mon secret : du porto')
+    expect((await carolDb.recipes.get('r_soupe'))?.notes.modifications).toBe('Moins de beurre')
+  })
+
+  it('famille : nouvelle recette commune par défaut, « Garder privée » respectée', async () => {
+    await carolDb.recipes.put(gratin())
+    await carolDb.recipes.put(emptyRecipe({ id: 'r_secret', title: 'Recette secrète de Carol', space: 'personal' }))
+    await carolSync.sync()
+    await phone1.sync()
+    expect((await legacyDb.recipes.get('r_gratin'))?.title).toBe('Gratin dauphinois')
+    expect(await legacyDb.recipes.get('r_secret')).toBeUndefined()
+  })
+
+  it('famille : modifications simultanées de champs différents fusionnées automatiquement', async () => {
+    carolNet.online = false
+    const g = (await carolDb.recipes.get('r_gratin'))!
+    await carolDb.recipes.put({ ...g, steps: [g.steps[0], { ...g.steps[1], text: 'Cuire 1 h 15 à 160 °C' }] })
+    await legacyDb.recipes.update('r_gratin', { title: 'Gratin dauphinois de Mamie' })
+    await phone1.sync()
+    carolNet.online = true
+    const rep = await carolSync.sync()
+    expect(rep.conflicts.map((c) => c.kind)).toContain('merged')
+    await phone1.sync()
+    for (const d of [legacyDb, carolDb]) {
+      const x = (await d.recipes.get('r_gratin'))!
+      expect([x.title, x.steps[1].text]).toEqual(['Gratin dauphinois de Mamie', 'Cuire 1 h 15 à 160 °C'])
+    }
+  })
+
+  it('famille : même ingrédient modifié des deux côtés → les deux versions conservées, résolution manuelle', async () => {
+    carolNet.online = false
+    const g = (await carolDb.recipes.get('r_gratin'))!
+    await carolDb.recipes.put({ ...g, ingredients: [g.ingredients[0], { ...g.ingredients[1], quantity: 50 }] })
+    const ga = (await legacyDb.recipes.get('r_gratin'))!
+    await legacyDb.recipes.put({ ...ga, ingredients: [ga.ingredients[0], { ...ga.ingredients[1], quantity: 30 }] })
+    await phone1.sync()
+    carolNet.online = true
+    const rep = await carolSync.sync()
+    const k = rep.conflicts.find((c) => c.kind === 'family-conflict')
+    expect(k?.conflictId).toBeTruthy()
+    // Rien n'est perdu : la version du serveur reste, celle de Carol est conservée à part.
+    expect((await carolDb.recipes.get('r_gratin'))!.ingredients[1].quantity).toBe(30)
+    const open = await alice1.api.familyConflicts()
+    expect(open).toHaveLength(1)
+    expect(open[0].items.map((i) => i.path)).toEqual(['ingredients[i2]'])
+    expect((open[0].mine.ingredients as { quantity: number }[])[1].quantity).toBe(50)
+    // Alice choisit 50 cl.
+    await phone1.sync()
+    const cur = (await alice1.api.changes(0)).changes.filter((c) => c.id === 'r_gratin').pop()!
+    const chosen = { ...cur.data!, ingredients: (cur.data!.ingredients as object[]).map((i, n) => (n === 1 ? { ...i, quantity: 50 } : i)) }
+    expect(await alice1.api.resolveConflict(open[0].id, chosen, cur.rev)).toMatchObject({ status: 'resolved' })
+    await carolSync.sync()
+    await phone1.sync()
+    expect((await carolDb.recipes.get('r_gratin'))!.ingredients[1].quantity).toBe(50)
+    expect((await legacyDb.recipes.get('r_gratin'))!.ingredients[1].quantity).toBe(50)
+    expect(await alice1.api.familyConflicts()).toEqual([])
+  })
+
+  it('famille : corbeille (suppression volontaire), restauration, historique', async () => {
+    await carolDb.recipes.delete('r_gratin')
+    await carolSync.sync()
+    await phone1.sync()
+    expect(await legacyDb.recipes.get('r_gratin')).toBeUndefined()
+    const trash = await alice1.api.trash()
+    expect(trash.map((t) => [t.id, t.trashedBy?.login])).toEqual([['r_gratin', 'carol']])
+    await alice1.api.restoreFromTrash('r_gratin')
+    await phone1.sync()
+    await carolSync.sync()
+    expect((await carolDb.recipes.get('r_gratin'))?.title).toBe('Gratin dauphinois de Mamie')
+    const h = await alice1.api.history('r_gratin')
+    expect(h.map((x) => x.kind)).toEqual(expect.arrayContaining(['edit', 'conflict', 'resolve', 'trash', 'restore']))
+  })
+
+  it('famille : recette verrouillée par son auteur → la version de Carol devient une recette personnelle', async () => {
+    await alice1.api.setLock('r_soupe', true)
+    await carolSync.sync()
+    carolNet.online = false
+    await carolDb.recipes.update('r_soupe', { title: 'Soupe selon Carol' })
+    carolNet.online = true
+    const rep = await carolSync.sync()
+    expect(rep.conflicts.map((c) => c.kind)).toContain('locked-copy')
+    const titles = (await carolDb.recipes.toArray()).map((r) => [r.title, r.space])
+    expect(titles).toEqual(expect.arrayContaining([['Soupe à l’oignon', 'family'], ['Soupe selon Carol (ma version)', 'personal']]))
+    await phone1.sync()
+    expect((await legacyDb.recipes.get('r_soupe'))?.title).toBe('Soupe à l’oignon')
+    await alice1.api.setLock('r_soupe', false)
+  })
+
+  it('famille : déplacement personnel → familial puis retour (favoris conservés)', async () => {
+    await legacyDb.recipes.update('r_tarte', { favorite: true })
+    await phone1.sync()
+    await expect(alice1.api.moveRecipe('r_tarte', 'family', false)).rejects.toMatchObject({ status: 409 }) // confirmation exigée
+    await phone1.moveRecipe('r_tarte', 'family', true)
+    expect(await legacyDb.recipes.get('r_tarte')).toMatchObject({ space: 'family', favorite: true, description: 'Avec cannelle' })
+    await carolSync.sync()
+    expect(await carolDb.recipes.get('r_tarte')).toMatchObject({ title: 'Tarte (téléphone 1)', favorite: false })
+    await phone1.moveRecipe('r_tarte', 'personal', true)
+    expect(await legacyDb.recipes.get('r_tarte')).toMatchObject({ space: 'personal', favorite: true })
+    await carolSync.sync()
+    expect(await carolDb.recipes.get('r_tarte')).toBeUndefined() // en corbeille pour la famille
+    await sync2.sync() // second appareil d'Alice : suit le déplacement
+    expect(await phone2.recipes.get('r_tarte')).toMatchObject({ space: 'personal', favorite: true })
+    expect((await phone1.verify()).ok).toBe(true)
+  })
+
+  it('famille : recette issue d’une publication TikTok — lien et source partagés, MP4 personnel', async () => {
+    await legacyDb.posts.put({
+      id: 'p_1', platform: 'tiktok', kind: 'video', originalUrl: 'https://vm.tiktok.com/x', url: 'https://www.tiktok.com/@chef/video/7301', postId: '7301',
+      dedupeKey: 'tiktok:7301', title: 'Pâtes crémeuses', description: '', sharedText: '', author: 'Chef', authorHandle: 'chef', authorUrl: '',
+      thumbnailPhotoId: null, notes: '', tags: [], status: 'converted', favorite: false, recipeId: 'r_reel', edited: [], metaStatus: 'ok', metaMessage: '',
+      metaFetchedAt: 1, metaAttempts: 1, mediaStatus: 'ready', mediaJobId: null, mediaProgress: 1, mediaMessage: '', createdAt: 1, updatedAt: 1,
+      video: { name: 'tiktok-7301.mp4', uri: 'file:///carnet-videos/tiktok-7301.mp4', bytes: 2e7, duration: 60, width: 720, height: 1280, sha256: '', source: 'nas', savedAt: 1 },
+    })
+    await legacyDb.recipes.put(emptyRecipe({ id: 'r_reel', title: 'Pâtes crémeuses', space: 'family', source: 'TikTok · Chef', sourceUrl: 'https://www.tiktok.com/@chef/video/7301', sourcePostId: 'p_1' }))
+    await phone1.sync()
+    await carolSync.sync()
+    expect(await carolDb.recipes.get('r_reel')).toMatchObject({ source: 'TikTok · Chef', sourceUrl: 'https://www.tiktok.com/@chef/video/7301', sourcePostId: null })
+    expect(await carolDb.posts.count()).toBe(0) // la publication (et sa vidéo) restent personnelles
+    const fam = (await carol.api.changes(0)).changes
+    expect(JSON.stringify(fam)).not.toContain('carnet-videos')
+  })
+
+  it('sauvegarde ZIP : export puis restauration « remplacer » sans casser la synchronisation', async () => {
+    const before = (await alice1.api.changes(0)).changes.length
+    const parsed = await readBackup(await exportBackup(undefined, { record: false }))
+    await applyRestore(parsed, 'replace')
+    expect(await legacyDb.recipes.get('r_soupe')).toMatchObject({ space: 'family', favorite: true }) // espace conservé
+    // La restauration normalise certaines données (réalisations recalculées depuis le journal,
+    // champs par défaut, recettes supprimées retirées des collections) : ces mises à jour partent,
+    // mais AUCUNE suppression et AUCUN nouvel élément (doublon).
+    const known = new Set((await alice1.api.changes(0)).changes.map((c) => `${c.collection}/${c.id}`))
+    const sent: PushChange[] = []
+    await new SyncEngine(legacyDb, { ...alice1.api, push: (c) => (sent.push(...c), alice1.api.push(c)) }).sync()
+    expect(sent.filter((c) => c.deleted)).toEqual([])
+    expect(sent.filter((c) => !known.has(`${c.collection}/${c.id}`))).toEqual([])
+    expect((await alice1.api.changes(0)).changes.length).toBe(before)
+    expect((await legacyDb.recipes.get('r_soupe'))?.notes.modifications).toBe('Mon secret : du porto')
+    expect((await phone1.verify()).ok).toBe(true)
+  })
+
+  it('famille : membre retiré — accès coupé, recettes familiales retirées de son appareil, rien de converti', async () => {
+    carolNet.online = false
+    await carolDb.recipes.put(emptyRecipe({ id: 'r_brouillon', title: 'Brouillon de Carol', space: 'family' })) // jamais envoyée
+    admin(`spaces.remove_member(db, 'carol')`)
+    carolNet.online = true
+    const rep = await carolSync.sync()
+    expect(rep.removedFromFamily).toBeGreaterThan(0)
+    const left = (await carolDb.recipes.toArray()).map((r) => `${r.id.replace(/~.*/, '~copie')}:${r.space}`).sort()
+    // Ses recettes personnelles restent (dont sa version de la soupe verrouillée) ; son brouillon
+    // jamais partagé lui reste, dans son carnet personnel. Rien d'autre n'est converti.
+    expect(left).toEqual(['r_brouillon:personal', 'r_secret:personal', 'r_soupe~copie:personal'])
+    expect(await carolDb.photos.get('ph_soupe')).toBeUndefined()
+    await expect(carol.api.changes(0, 10, 'family')).rejects.toMatchObject({ status: 403 })
+    // Côté Alice, rien n'a bougé.
+    await phone1.sync()
+    expect(await legacyDb.recipes.get('r_gratin')).toBeTruthy()
   })
 
   let bob: Awaited<ReturnType<typeof session>>

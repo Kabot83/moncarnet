@@ -1,9 +1,10 @@
 """Administration (dans le conteneur : Container Manager → Conteneur → carnet-sync → Terminal).
 
-  python -m app.admin setup                     → premier compte, en mode interactif (mot de passe masqué)
-  python -m app.admin user create               → autre compte (interactif) ; ou invite create
+  python -m app.admin setup                     → premier compte + famille (interactif, mot de passe masqué)
+  python -m app.admin user create               → autre compte (interactif) ; ou invite create --family
+  python -m app.admin family show | family add <login> | family remove <login> | family role <login> admin|member
   python -m app.admin user list | user disable <login> | user reset-password <login>
-  python -m app.admin invite create --note "…"  → code d'invitation (7 jours, usage unique)
+  python -m app.admin invite create --note "…" [--family] → code d'invitation (7 jours, usage unique)
   python -m app.admin backup                    → sauvegarde immédiate (comme celle de la nuit)
   python -m app.admin status                    → état de la dernière sauvegarde, versions disponibles
   python -m app.admin verify <sauvegarde>       → relit et contrôle une sauvegarde
@@ -27,7 +28,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import auth
+from . import auth, spaces
 from .backup import DB_FILE, check, create_backup, list_backups, request_restore, restore_test, rotate, verify_backup
 from .config import Settings
 from .db import Database, now
@@ -58,7 +59,7 @@ def _ask_password() -> str:
     raise SystemExit('Abandon : aucun compte modifié.')
 
 
-def _create_user(db: Database, login: str | None, name: str | None) -> None:
+def _create_user(db: Database, login: str | None, name: str | None) -> str:
     login = login or _ask('Identifiant de connexion (ex. alexandre) : ')
     try:
         login = auth.normalize_login(login)
@@ -70,6 +71,7 @@ def _create_user(db: Database, login: str | None, name: str | None) -> None:
     pw = _ask_password()
     auth.create_user(db, login, name or login, pw)
     print(f'Compte « {login} » créé. Connectez-vous dans Mon Carnet avec ce mot de passe.')
+    return login
 
 
 def _selftest() -> None:
@@ -97,6 +99,8 @@ def _selftest() -> None:
         raise SystemExit(f"3. Connexion refusée : {t.get('message', st)}")
     st, me = call('GET', '/v1/me', token=t['access_token'])
     print(f"3. Connexion réussie : {me['user']['display_name']}")
+    fam = me.get('family')
+    print('   Catalogue familial :', f"{fam['name']} ({'administrateur' if fam['role'] == 'admin' else 'membre'}, {len(fam['members'])} membre(s))" if fam else 'aucun')
     st, ch = call('GET', '/v1/sync/changes?since=0&page_size=1', token=t['access_token'])
     print('4. Lecture du carnet :', 'oui' if st == 200 else f'NON ({st})')
     st, _ = call('POST', '/v1/auth/logout', token=t['access_token'])
@@ -115,7 +119,19 @@ def main(argv: list[str] | None = None) -> None:
     u.add_parser('disable').add_argument('login')
     u.add_parser('reset-password').add_argument('login')
     i = sub.add_parser('invite').add_subparsers(dest='action', required=True)
-    i.add_parser('create').add_argument('--note', default='')
+    ic = i.add_parser('create')
+    ic.add_argument('--note', default='')
+    ic.add_argument('--family', action='store_true', help='le nouveau compte rejoint la famille')
+    f = sub.add_parser('family').add_subparsers(dest='action', required=True)
+    fc = f.add_parser('create')
+    fc.add_argument('name')
+    fc.add_argument('--admin', required=True)
+    f.add_parser('show')
+    f.add_parser('add').add_argument('login')
+    f.add_parser('remove').add_argument('login')
+    fr = f.add_parser('role')
+    fr.add_argument('login')
+    fr.add_argument('role', choices=['admin', 'member'])
     sub.add_parser('backup')
     sub.add_parser('status')
     sub.add_parser('verify').add_argument('src')
@@ -156,7 +172,10 @@ def main(argv: list[str] | None = None) -> None:
         if db.one('SELECT 1 FROM users'):
             raise SystemExit('Un compte existe déjà : utilisez « user create » pour en ajouter un autre.')
         print('Création du compte principal de Carnet Sync.')
-        _create_user(db, None, None)
+        login = _create_user(db, None, None)
+        name = _ask('Nom du catalogue familial (Entrée : « Famille ») : ') or 'Famille'
+        spaces.create_family(db, name, login)
+        print(f'Catalogue « {name} » créé ; vous en êtes l’administrateur.')
     elif a.cmd == 'user':
         if a.action == 'create':
             _create_user(db, a.login, a.name)
@@ -181,7 +200,32 @@ def main(argv: list[str] | None = None) -> None:
                 c.execute('UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', (now(), uid['id']))
             print('Mot de passe changé ; tous les appareils devront se reconnecter.')
     elif a.cmd == 'invite':
-        print(f'Code d’invitation (7 jours, usage unique) : {auth.create_invite(db, a.note)}')
+        fid = spaces.family_id(db) if a.family else None
+        if a.family and not fid:
+            raise SystemExit('Aucune famille : créez-la d’abord.')
+        print(f'Code d’invitation (7 jours, usage unique{", rejoint la famille" if fid else ""}) : {auth.create_invite(db, a.note, family_id=fid)}')
+    elif a.cmd == 'family':
+        if a.action == 'create':
+            spaces.create_family(db, a.name, a.admin)
+            print('Famille créée.')
+        elif a.action == 'add':
+            spaces.add_member(db, a.login)
+            print(f'{a.login} fait maintenant partie de la famille.')
+        elif a.action == 'remove':
+            spaces.remove_member(db, a.login)
+            print(f'{a.login} n’a plus accès au catalogue familial (effet immédiat). Ses données personnelles sont conservées.')
+            print('Ses appareils retireront les recettes familiales à leur prochaine connexion ; une copie déjà faite hors ligne ne peut pas être effacée à distance.')
+        elif a.action == 'role':
+            spaces.set_role(db, a.login, a.role)
+            print('Rôle modifié.')
+        else:
+            fid = spaces.family_id(db)
+            if not fid:
+                print('Aucune famille.')
+            else:
+                print(db.one('SELECT name FROM spaces WHERE id = ?', (fid,))['name'])
+                for m in db.q('SELECT u.login, u.display_name, m.role, m.removed_at FROM space_members m JOIN users u ON u.id = m.user_id WHERE m.space_id = ? ORDER BY m.joined_at', (fid,)):
+                    print(' -', m['login'], '·', m['display_name'], '·', m['role'], '· retiré' if m['removed_at'] else '')
     elif a.cmd == 'backup':
         if not s.backup_dir:
             raise SystemExit('Aucun dossier de sauvegarde configuré (SYNC_BACKUP_DIR).')

@@ -21,6 +21,7 @@ from typing import Any
 from .auth import new_id
 from .config import Settings
 from .db import Database, now
+from .spaces import Access
 from .sync import blob_path, copy_blob
 
 RECIPE_SHARED_FIELDS = (
@@ -41,8 +42,8 @@ def _frozen_dir(s: Settings, tid: str) -> Path:
     return s.data_dir / 'transfers' / tid
 
 
-def _record(db: Database, owner_id: str, coll: str, rid: str) -> dict | None:
-    r = db.one('SELECT data FROM records WHERE owner_id = ? AND collection = ? AND id = ? AND deleted = 0', (owner_id, coll, rid))
+def _record(db: Database, space_id: str, coll: str, rid: str) -> dict | None:
+    r = db.one('SELECT data FROM records WHERE space_id = ? AND collection = ? AND id = ? AND deleted = 0 AND trashed_at IS NULL', (space_id, coll, rid))
     return json.loads(r['data']) if r else None
 
 
@@ -54,13 +55,15 @@ def lookup_user(db: Database, login: str, requester_id: str) -> dict | None:
     return {'login': u['login'], 'display_name': u['display_name']}
 
 
-def send(db: Database, s: Settings, sender: dict, recipient_login: str, kind: str, source_id: str, include_tips: bool) -> dict:
+def send(db: Database, s: Settings, a: Access, sender: dict, recipient_login: str, kind: str, source_id: str, include_tips: bool) -> dict:
     if kind not in ('recipe', 'post'):
         raise TransferError('invalid_kind', 'Seules les recettes et les publications peuvent être envoyées.')
     rcp = db.one('SELECT id, login, display_name FROM users WHERE login = ? AND disabled_at IS NULL', ((recipient_login or '').strip().lower(),))
     if not rcp or rcp['id'] == sender['id']:
         raise TransferError('unknown_recipient', 'Destinataire introuvable.', 404)
-    src = _record(db, sender['id'], 'recipes' if kind == 'recipe' else 'posts', source_id)
+    # Recette lue dans l'espace personnel OU familial de l'expéditeur (jamais ailleurs).
+    coll = 'recipes' if kind == 'recipe' else 'posts'
+    src_sid, src = next(((sid, d) for sid in a.spaces if (d := _record(db, sid, coll, source_id))), (None, None))
     if not src:
         raise TransferError('not_found', 'Élément introuvable dans votre carnet synchronisé : synchronisez puis réessayez.', 404)
 
@@ -78,14 +81,14 @@ def send(db: Database, s: Settings, sender: dict, recipient_login: str, kind: st
     photos, hashes = [], []
     fdir = _frozen_dir(s, tid)
     for pid in dict.fromkeys(p for p in photo_ids if p):
-        meta = _record(db, sender['id'], 'photos', pid)
+        meta = _record(db, src_sid, 'photos', pid)
         if not meta:
             continue
         files = []
         for sha in (meta.get('sha256'), meta.get('thumbSha256')):
-            if sha and blob_path(s, sender['id'], sha).exists():
+            if sha and blob_path(s, src_sid, sha).exists():
                 fdir.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(blob_path(s, sender['id'], sha), fdir / sha)
+                shutil.copyfile(blob_path(s, src_sid, sha), fdir / sha)
                 files.append(sha)
         if meta.get('sha256') in files:
             photos.append({'id': pid, **{k: meta.get(k) for k in ('sha256', 'thumbSha256', 'mime', 'width', 'height')}})
@@ -96,7 +99,7 @@ def send(db: Database, s: Settings, sender: dict, recipient_login: str, kind: st
     for p in photos:
         if p['id'] == first:
             cover = p.get('thumbSha256') or p['sha256']
-            row = db.one('SELECT mime FROM blobs WHERE owner_id = ? AND sha256 = ?', (sender['id'], cover))
+            row = db.one('SELECT mime FROM blobs WHERE space_id = ? AND sha256 = ?', (src_sid, cover))
             cover_mime = row['mime'] if row else p.get('mime')
 
     t = now()
@@ -167,7 +170,7 @@ def cover(db: Database, s: Settings, user_id: str, tid: str) -> tuple[Path, str]
     return (p, t['cover_mime'] or 'image/webp') if p.exists() else None
 
 
-def accept(db: Database, s: Settings, user: dict, tid: str) -> dict:
+def accept(db: Database, s: Settings, a: Access, user: dict, tid: str) -> dict:
     t = _mine(db, user['id'], tid)
     if t['status'] == 'accepted':
         return {'id': t['result_id'], 'already': True}  # acceptation répétée : aucun doublon
@@ -184,9 +187,6 @@ def accept(db: Database, s: Settings, user: dict, tid: str) -> dict:
     id_map: dict[str, str] = {}
     photo_records = []
     for i, p in enumerate(photos):
-        for sha in (p.get('sha256'), p.get('thumbSha256')):
-            if sha and (fdir / sha).exists():
-                copy_blob(db, s, fdir / sha, user['id'], sha, p.get('mime') or 'image/webp')
         new_pid = f"ph_{tid[2:]}_{i}"
         id_map[p['id']] = new_pid
         photo_records.append((new_pid, {'id': new_pid, 'sha256': p['sha256'], 'thumbSha256': p.get('thumbSha256') or p['sha256'], 'mime': p.get('mime') or 'image/webp', 'width': p.get('width') or 0, 'height': p.get('height') or 0, 'createdAt': ts_ms, 'isDemo': False}))
@@ -214,11 +214,19 @@ def accept(db: Database, s: Settings, user: dict, tid: str) -> dict:
         cur = c.execute('SELECT status, result_id FROM transfers WHERE id = ?', (tid,)).fetchone()
         if cur['status'] == 'accepted':
             return {'id': cur['result_id'], 'already': True}
+        # Copie indépendante dans l'espace PERSONNEL du destinataire (fichiers compris).
+        target = a.personal
+        for p in photos:
+            for sha in (p.get('sha256'), p.get('thumbSha256')):
+                if sha and (fdir / sha).exists():
+                    copy_blob(c, s, fdir / sha, target, sha, p.get('mime') or 'image/webp')
+        ins = 'INSERT INTO records (space_id, collection, id, rev, deleted, data, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)'
+        t = now()
         for pid, pdata in photo_records:
-            if not c.execute("SELECT 1 FROM records WHERE owner_id = ? AND collection = 'photos' AND id = ?", (user['id'], pid)).fetchone():
-                c.execute("INSERT INTO records (owner_id, collection, id, rev, deleted, data, client_updated_at, server_updated_at) VALUES (?, 'photos', ?, ?, 0, ?, ?, ?)", (user['id'], pid, Database.next_rev(c), json.dumps(pdata, ensure_ascii=False), ts_ms, now()))
-        if not c.execute('SELECT 1 FROM records WHERE owner_id = ? AND collection = ? AND id = ?', (user['id'], coll, new_id_)).fetchone():
-            c.execute('INSERT INTO records (owner_id, collection, id, rev, deleted, data, client_updated_at, server_updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)', (user['id'], coll, new_id_, Database.next_rev(c), json.dumps(data, ensure_ascii=False), ts_ms, now()))
+            if not c.execute("SELECT 1 FROM records WHERE space_id = ? AND collection = 'photos' AND id = ?", (target, pid)).fetchone():
+                c.execute(ins, (target, 'photos', pid, Database.next_rev(c), json.dumps(pdata, ensure_ascii=False), user['id'], t, user['id'], t))
+        if not c.execute('SELECT 1 FROM records WHERE space_id = ? AND collection = ? AND id = ?', (target, coll, new_id_)).fetchone():
+            c.execute(ins, (target, coll, new_id_, Database.next_rev(c), json.dumps(data, ensure_ascii=False), user['id'], t, user['id'], t))
         c.execute("UPDATE transfers SET status = 'accepted', decided_at = ?, result_id = ? WHERE id = ?", (now(), new_id_, tid))
     return {'id': new_id_, 'already': False}
 
