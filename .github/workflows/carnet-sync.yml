@@ -120,6 +120,27 @@ jobs:
           if grep -qE "$PW|mca_|mcr_" /tmp/journal.txt; then echo 'Secret trouvé dans le journal'; exit 1; fi
           docker rm -f cs
 
+      - name: Démarrage avec le docker-compose.yml réel (comme dans Container Manager)
+        run: |
+          set -euo pipefail
+          # Aucune limite CPU : non prise en charge par le noyau Synology (ordonnanceur CFS).
+          if grep -nE '^\s*(cpus|cpu_quota|cpu_period|cpu_shares|cpuset|cpu_count|cpu_percent):' docker-compose.yml; then
+            echo 'Limite CPU interdite (DSM)'; exit 1
+          fi
+          mkdir -p /tmp/nas && chmod 777 /tmp/nas
+          sed -e 's#ghcr.io/kabot83/carnet-sync:[0-9.]*#carnet-sync:test#' -e 's#/volume1/carnet-sync#/tmp/nas#' docker-compose.yml > /tmp/compose.yml
+          docker compose -f /tmp/compose.yml up -d
+          for i in $(seq 30); do curl -sf http://127.0.0.1:8090/v1/health && break; sleep 1; done
+          echo
+          docker inspect carnet-sync --format 'cpu={{.HostConfig.NanoCpus}}/{{.HostConfig.CpuQuota}} ro={{.HostConfig.ReadonlyRootfs}} cap={{.HostConfig.CapDrop}} sec={{.HostConfig.SecurityOpt}} pids={{.HostConfig.PidsLimit}} mem={{.HostConfig.Memory}} ports={{json .HostConfig.PortBindings}}' | tee /tmp/inspect.txt
+          grep -q 'cpu=0/0 ro=true cap=\[ALL\] sec=\[no-new-privileges:true\] pids=100 mem=536870912' /tmp/inspect.txt
+          grep -q '"HostIp":"127.0.0.1"' /tmp/inspect.txt
+          test "$(docker exec carnet-sync id -u)" = "1030"
+          sleep 2; docker logs carnet-sync > /tmp/journal2.txt 2>&1; cat /tmp/journal2.txt
+          grep -q 'Sauvegarde nocturne programmée à 03:15' /tmp/journal2.txt
+          test -d /tmp/nas/data && test -f /tmp/nas/data/carnet-sync.sqlite3
+          docker compose -f /tmp/compose.yml down
+
       - name: Publication dans le registre GitHub
         if: github.ref == 'refs/heads/master' || inputs.publier
         run: |

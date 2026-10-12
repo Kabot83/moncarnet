@@ -37,7 +37,8 @@ services:
       - no-new-privileges:true
     pids_limit: 100
     mem_limit: 512m
-    cpus: 1
+    # Pas de limite CPU (cpus / cpu_quota) : le noyau Synology ne gère pas l'ordonnanceur CFS
+    # (erreur « CPU CFS scheduler » à l'installation, constatée avec Carnet Media sur DS920+).
     logging:
       driver: json-file
       options:
