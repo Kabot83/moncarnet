@@ -6,6 +6,7 @@
  * arrière-plan, sans jamais bloquer.
  */
 import { parseSharedContent, parseSocialUrl, socialPlatformOf, sourceAppLabel } from './links'
+import { startNasImport } from './nasMedia'
 import { enrichPost, savePostFromLink } from './posts'
 
 export interface IncomingShare {
@@ -32,6 +33,8 @@ export async function processShare(share: IncomingShare): Promise<ShareOutcome> 
     for (const { raw, link } of links) results.push(await savePostFromLink(link!, { originalUrl: raw, sharedText: content.text, subject: content.subject }))
     // Informations publiques récupérées ensuite (jamais bloquant).
     for (const r of results) if (!r.existing || r.post.metaStatus === 'pending') void enrichPost(r.post.id).catch(() => undefined)
+    // Vidéo : récupérée en arrière-plan par le NAS (application Android configurée).
+    for (const r of results) if (!r.post.video) void startNasImport(r.post.id).catch(() => undefined)
     if (results.length === 1) return { kind: 'post', postId: results[0].post.id, existing: results[0].existing, from }
     return { kind: 'posts', count: results.length, existing: results.filter((r) => r.existing).length }
   }

@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ChefHat, ChevronRight, Database, Info, Monitor, Moon, ShieldCheck, ShoppingBasket, Sun, User } from 'lucide-react'
+import { ChefHat, ChevronRight, Clapperboard, Database, Info, Monitor, Moon, ShieldCheck, ShoppingBasket, Sun, User } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
@@ -104,6 +104,7 @@ export default function SettingsPage() {
           label="Sauvegarder / restaurer mon carnet"
           detail={settings.lastBackupAt ? `Dernière sauvegarde ${relativeDays(settings.lastBackupAt)}` : 'Aucune sauvegarde'}
         />
+        <NavRow to="/reglages/videos" icon={<Clapperboard size={18} />} label="Vidéos (NAS)" detail="Récupération automatique TikTok / Instagram" />
         <NavRow to="/courses" icon={<ShoppingBasket size={18} />} label="Liste de courses" />
         <div className="py-3.5 text-sm">
           <p className="font-medium">Stockage sur ce téléphone</p>

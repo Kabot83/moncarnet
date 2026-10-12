@@ -81,6 +81,9 @@ export const setPostStatus = (id: string, status: PostStatus) => updatePost(id, 
 export const togglePostFavorite = (p: SocialPost) => db.posts.update(p.id, { favorite: !p.favorite, updatedAt: Date.now() })
 
 export async function deletePost(id: string) {
+  const post = await db.posts.get(id)
+  // Vidéo enregistrée sur le téléphone : supprimée avec la fiche (la copie du NAS reste).
+  if (post?.video) await (await import('@/platform/carnetMedia')).deleteLocalFile(post.video.name)
   await db.posts.delete(id)
   // La fiche recette éventuelle reste intacte ; elle perd seulement son lien vers la publication.
   await db.recipes.where('sourcePostId').equals(id).modify({ sourcePostId: null })

@@ -2,7 +2,7 @@
  * Éléments d'interface de la bibliothèque « À essayer » : carte, badge de plateforme,
  * import d'un lien, onglets « Mes recettes / À essayer ».
  */
-import { ClipboardPaste, Heart, Link2, Play } from 'lucide-react'
+import { ClipboardPaste, HardDrive, Heart, Link2, Play } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useSafeNavigate } from '@/hooks/useOverlayHistory'
@@ -59,6 +59,11 @@ export function PostCard({ post, onOpen }: { post: SocialPost; onOpen: () => voi
             </span>
           )}
         </div>
+        {post.video && (
+          <span className="absolute right-2 bottom-2 inline-flex items-center gap-1 rounded-full bg-paper/90 px-2 py-0.5 text-[11px] font-semibold text-sage" title="Vidéo enregistrée sur le téléphone">
+            <HardDrive size={12} /> Hors ligne
+          </span>
+        )}
         {post.status !== 'toTry' && (
           <span className={`absolute bottom-2 left-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${post.status === 'converted' ? 'bg-sage text-white dark:text-[#1b1916]' : 'bg-paper/90 text-ink'}`}>
             {STATUS_LABEL[post.status]}

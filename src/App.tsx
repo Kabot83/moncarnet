@@ -7,6 +7,7 @@ import { LoadingBlock } from './components/ui/Spinner'
 import { requestPersistentStorage } from './db/db'
 import { seedDemoData } from './db/seed'
 import { startShareReceiver } from './platform/shareReceiver'
+import { resumeNasImports } from './social/nasMedia'
 import { enrichPending } from './social/posts'
 import { processShare, routeForShare } from './social/share'
 import { collectOrphanPhotos } from './services/photos'
@@ -33,6 +34,7 @@ const ImportPage = lazy(() => import('./pages/ImportPage'))
 const AboutPage = lazy(() => import('./pages/AboutPage'))
 const SocialLibraryPage = lazy(() => import('./pages/SocialLibraryPage'))
 const SocialPostPage = lazy(() => import('./pages/SocialPostPage'))
+const VideoSettingsPage = lazy(() => import('./pages/VideoSettingsPage'))
 
 /** Démarrage unique (même si React monte deux fois en mode strict). */
 let boot: Promise<void> | null = null
@@ -95,7 +97,10 @@ export function App() {
     }
     startShareReceiver((o) => navigateRef.current(routeForShare(o)))
     // Informations des publications enregistrées hors ligne : récupérées au retour du réseau.
-    const online = () => void enrichPending()
+    const online = () => {
+      void enrichPending()
+      void resumeNasImports()
+    }
     window.addEventListener('online', online)
     const t = setTimeout(online, 3000)
     return () => {
@@ -136,6 +141,7 @@ export function App() {
           <Route path="/reglages/profil" element={<ProfilePage />} />
           <Route path="/reglages/sauvegarde" element={<BackupPage />} />
           <Route path="/reglages/a-propos" element={<AboutPage />} />
+          <Route path="/reglages/videos" element={<VideoSettingsPage />} />
           <Route path="*" element={<HomePage />} />
         </Routes>
       </Suspense>

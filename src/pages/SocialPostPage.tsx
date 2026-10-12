@@ -9,6 +9,7 @@ import { ArrowLeft, BookOpen, CheckCircle2, ExternalLink, Heart, Info, Play, Ref
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { ConvertPostSheet } from '@/components/social/ConvertPostSheet'
+import { MediaSection } from '@/components/social/MediaSection'
 import { PlatformBadge, PostThumb, STATUS_LABEL, formatDay } from '@/components/social/SocialUi'
 import { Button, IconButton } from '@/components/ui/Button'
 import { useConfirm, useToast } from '@/components/ui/Feedback'
@@ -142,7 +143,8 @@ export default function SocialPostPage() {
 
         <MetaNotice post={post} online={online} refreshing={refreshing} onRefresh={() => void refresh()} />
 
-        <Player post={post} online={online} />
+        <MediaSection post={post} />
+        {!post.video && <Player post={post} online={online} />}
 
         <Button className="mt-3" block variant="secondary" icon={<ExternalLink size={17} />} onClick={() => void openExternal(post.url)}>
           Voir sur {platform}
@@ -313,6 +315,7 @@ function MetaNotice({ post, online, refreshing, onRefresh }: { post: SocialPost;
       text = post.metaMessage || 'Publication privée, supprimée ou introuvable : le lien et vos notes restent enregistrés.'
       break
     case 'limited':
+      if (post.description.trim()) return null // légende récupérée par le NAS ou collée à la main
       text = 'Instagram ne transmet ni titre, ni légende, ni miniature aux applications : le lien, le lecteur intégré et vos propres notes sont disponibles.'
       canRetry = false
       break
@@ -363,7 +366,7 @@ function Player({ post, online }: { post: SocialPost; online: boolean }) {
             <Play size={20} fill="currentColor" />
           </span>
           <span>
-            <span className="block font-semibold">Lire la vidéo ici</span>
+            <span className="block font-semibold">Lire en ligne</span>
             <span className="block text-xs opacity-75">{online ? `Lecteur officiel ${PLATFORM_LABEL[post.platform]} · nécessite Internet` : 'Hors connexion : la lecture nécessite Internet'}</span>
           </span>
         </button>

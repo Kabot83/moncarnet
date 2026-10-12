@@ -84,3 +84,11 @@ Instagram ne transmettant pas la légende, on peut la copier depuis Instagram et
 8. Une vidéo **privée ou supprimée** (si vous en avez une) : message clair, lien conservé.
 9. Fiche → **Lire la vidéo ici**, **Voir sur TikTok** (ouvre l'application TikTok), **Transformer en recette** → enregistrer.
 10. Réglages → Sauvegarde → exporter, puis restaurer (fusion) : publications toujours là, sans doublon.
+
+## Vidéos hors ligne avec le NAS (Carnet Media, version 1.4.0)
+
+- Réglages → **Vidéos (NAS)** : adresse du service (ex. `https://monnas.synology.me:8444`) et jeton de l'appareil (créé sur le NAS). Le jeton est chiffré par le magasin de clés d'Android (AES-256, clé non exportable) ; il n'est jamais réaffiché ni lu par l'interface : c'est la partie native qui effectue les requêtes, en HTTPS avec certificat validé.
+- « Partager → Mon Carnet » : la fiche est enregistrée tout de suite, puis le NAS récupère légende, créateur, miniature et vidéo ; le téléphone copie la vidéo dans son stockage privé (lecture hors ligne, avance / retour, plein écran). Progression et erreurs affichées sur la fiche.
+- Si la vidéo ne peut pas être récupérée : la fiche reste, avec la raison, et les boutons **Réessayer** et **Importer un fichier vidéo** (sélecteur Android, copie immédiate, miniature extraite de la vidéo).
+- Les vidéos sont supprimées du téléphone avec leur fiche (la copie du NAS reste). Elles ne sont pas incluses dans la sauvegarde ZIP (le NAS les conserve) ; après une restauration, « Réessayer » les récupère de nouveau.
+- Service du NAS : voir `nas/carnet-media/README.md`.

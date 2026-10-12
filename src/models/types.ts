@@ -257,6 +257,30 @@ export const SocialPostSchema = z.object({
   metaMessage: z.string().max(300).default(''),
   metaFetchedAt: z.number().nullable().default(null),
   metaAttempts: z.number().int().min(0).default(0),
+  /** Vidéo enregistrée sur l'appareil (dossier privé de l'application) : lecture hors ligne. */
+  video: z
+    .object({
+      name: z.string().max(140),
+      uri: z.string().max(2000),
+      bytes: z.number().int().min(0),
+      duration: z.number().nullable().default(null),
+      width: z.number().nullable().default(null),
+      height: z.number().nullable().default(null),
+      sha256: z.string().max(64).default(''),
+      source: z.enum(['nas', 'gallery']),
+      savedAt: z.number(),
+    })
+    .nullable()
+    .default(null),
+  /**
+   * Récupération de la vidéo par le NAS (Carnet Media) : none (pas de service), pending,
+   * downloading (NAS ou transfert vers le téléphone), ready, unavailable (non téléchargeable),
+   * failed (erreur passagère, nouvel essai possible).
+   */
+  mediaStatus: z.enum(['none', 'pending', 'downloading', 'ready', 'unavailable', 'failed']).default('none'),
+  mediaJobId: z.string().max(64).nullable().default(null),
+  mediaProgress: z.number().min(0).max(1).default(0),
+  mediaMessage: z.string().max(400).default(''),
   createdAt: z.number(),
   updatedAt: z.number(),
 })
