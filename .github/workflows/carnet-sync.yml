@@ -1,0 +1,125 @@
+name: Service NAS (Carnet Sync)
+
+# Tests, construction et vérification de l'image Docker de Carnet Sync. Publication dans le
+# registre GitHub (ghcr.io/kabot83/carnet-sync) seulement depuis master, ou sur demande explicite
+# (« Run workflow » avec publier = true). Aucun secret : seul le jeton automatique GITHUB_TOKEN
+# sert à publier l'image. Aucun compte réel : les comptes de test n'existent que dans le CI.
+
+on:
+  push:
+    branches: [master, carnet-sync]
+    paths: ['nas/carnet-sync/**', 'src/sync/**', 'tests/unit/sync-live.test.ts', '.github/workflows/carnet-sync.yml']
+  workflow_dispatch:
+    inputs:
+      publier:
+        description: 'Publier l’image dans le registre GitHub'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: carnet-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Tests du serveur (isolation, comptes, conflits, envois, sauvegardes)
+        working-directory: nas/carnet-sync
+        run: |
+          pip install -q -r requirements.txt pytest httpx
+          python -m pytest -q -p no:cacheprovider tests
+
+      - name: Bout en bout (moteur de l'application contre le vrai serveur)
+        run: |
+          npm ci --no-audit --no-fund
+          SYNC_LIVE_PY="$(which python)" npx vitest run tests/unit/sync-live.test.ts
+
+  image:
+    needs: tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nas/carnet-sync
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: v
+        run: echo "version=$(python3 -c 'from app.config import VERSION; print(VERSION)')" >> "$GITHUB_OUTPUT"
+
+      - name: Construction de l'image
+        run: docker build -t carnet-sync:test .
+
+      - name: Vérification du conteneur (comme sur le NAS)
+        run: |
+          set -euo pipefail
+          test "$(docker run --rm carnet-sync:test id -u)" = "10001"
+          # Même montage que sur le NAS : un seul dossier partagé (data + backups).
+          mkdir -p /tmp/cs && chmod 777 /tmp/cs
+          docker run -d --name cs --read-only --tmpfs /tmp:size=64m --cap-drop ALL --security-opt no-new-privileges:true \
+            -e SYNC_DATA_DIR=/srv/carnet/data -e SYNC_BACKUP_DIR=/srv/carnet/backups -v /tmp/cs:/srv/carnet -p 127.0.0.1:8090:8090 carnet-sync:test
+          for i in $(seq 30); do curl -sf http://127.0.0.1:8090/v1/health && break; sleep 1; done
+          echo
+          # Sans session : tout est refusé ; pas de documentation interactive.
+          for path in /v1/me /v1/sync/changes /v1/transfers/inbox /v1/users/lookup?login=x; do
+            test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090$path)" = "401"
+          done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090/docs)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"invite":"x","login":"eve","password":"0123456789ab"}' http://127.0.0.1:8090/v1/auth/register)" = "403"
+
+          # Premier compte, en mode interactif (mot de passe aléatoire propre au CI, jamais affiché).
+          PW="$(openssl rand -hex 16)"
+          printf 'essai\nEssai\n%s\n%s\n' "$PW" "$PW" | docker exec -i cs python -m app.admin setup
+          printf 'essai\n%s\n' "$PW" | docker exec -i cs python -m app.admin selftest | tee /tmp/selftest.txt
+          grep -q 'Connexion réussie : Essai' /tmp/selftest.txt && grep -q 'fermée : oui' /tmp/selftest.txt
+          TOKEN="$(curl -sf -H 'Content-Type: application/json' -d "{\"login\":\"essai\",\"password\":\"$PW\"}" http://127.0.0.1:8090/v1/auth/login | jq -r .access_token)"
+          AUTH="Authorization: Bearer $TOKEN"
+          head -c 3000000 /dev/urandom > /tmp/photo.bin
+          SHA="$(sha256sum /tmp/photo.bin | cut -d' ' -f1)"
+          curl -sf -X PUT -H "$AUTH" -H 'Content-Type: image/jpeg' --data-binary @/tmp/photo.bin http://127.0.0.1:8090/v1/blobs/$SHA
+          curl -sf -H "$AUTH" -H 'Content-Type: application/json' \
+            -d "{\"changes\":[{\"collection\":\"photos\",\"id\":\"ph_1\",\"base_rev\":0,\"data\":{\"id\":\"ph_1\",\"sha256\":\"$SHA\"}}]}" \
+            http://127.0.0.1:8090/v1/sync/push | grep -q '"status":"ok"'
+
+          # Sauvegarde, cohérence, vérification et restauration à blanc, dans le conteneur.
+          docker exec cs python -m app.admin backup
+          docker exec cs python -m app.admin check --full
+          B="$(ls /tmp/cs/backups | grep '^carnet-sync-' | head -1)"
+          docker exec cs python -m app.admin verify "/srv/carnet/backups/$B"
+          docker exec cs python -m app.admin restore-test "/srv/carnet/backups/$B"
+          test "$(sha256sum "/tmp/cs/backups/$B/files/"*/*/"$SHA" | cut -d' ' -f1)" = "$SHA"
+
+          # Restauration réelle : vérifiée, appliquée au redémarrage, ancienne base conservée.
+          docker exec cs python -m app.admin restore "/srv/carnet/backups/$B"
+          docker restart cs
+          for i in $(seq 30); do curl -sf http://127.0.0.1:8090/v1/health && break; sleep 1; done
+          echo
+          ls -d /tmp/cs/data-avant-restauration-*
+          printf 'essai\n%s\n' "$PW" | docker exec -i cs python -m app.admin selftest | grep -q 'Connexion réussie'
+          docker exec cs python -m app.admin check --full
+
+          docker logs cs
+          # Aucun mot de passe ni jeton dans le journal.
+          if docker logs cs 2>&1 | grep -qE "$PW|mca_|mcr_"; then echo 'Secret trouvé dans le journal'; exit 1; fi
+          docker rm -f cs
+
+      - name: Publication dans le registre GitHub
+        if: github.ref == 'refs/heads/master' || inputs.publier
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag carnet-sync:test ghcr.io/kabot83/carnet-sync:${{ steps.v.outputs.version }}
+          docker push ghcr.io/kabot83/carnet-sync:${{ steps.v.outputs.version }}

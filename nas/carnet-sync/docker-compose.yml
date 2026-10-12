@@ -1,0 +1,45 @@
+# Carnet Sync — configuration à coller dans Container Manager (Projet → Créer).
+# Aucun secret ici : le compte Mon Carnet est créé DANS le conteneur (python -m app.admin setup).
+#
+# - Écoute UNIQUEMENT sur 127.0.0.1 du NAS : seul le reverse proxy DSM (HTTPS 8445, certificat
+#   Let's Encrypt existant) peut le joindre. La base SQLite n'est jamais exposée.
+# - Dossiers propres à Carnet Sync, distincts de Carnet Media.
+#
+# À adapter avant de coller (1 valeur) :
+#   - 1030:100 : UID:GID du compte technique « carnet-sync » (voir README, étape 3)
+services:
+  carnet-sync:
+    image: ghcr.io/kabot83/carnet-sync:0.1.0
+    container_name: carnet-sync
+    restart: unless-stopped
+    user: "1030:100"
+    environment:
+      SYNC_PORT: "8090"
+      SYNC_TRUST_PROXY: "1"             # adresse réelle transmise par le reverse proxy DSM (limites de connexion)
+      SYNC_CORS_ORIGINS: "https://localhost,https://kabot83.github.io"
+      SYNC_MAX_USER_GB: "20"
+      SYNC_DATA_DIR: "/srv/carnet/data"
+      SYNC_BACKUP_DIR: "/srv/carnet/backups"  # sauvegarde nocturne automatique
+      SYNC_BACKUP_TIME: "03:15"         # heure de Paris
+      SYNC_BACKUP_KEEP_DAILY: "14"      # 14 dernières nuits
+      SYNC_BACKUP_KEEP_WEEKLY: "8"      # + 1 version par semaine sur 8 semaines
+    volumes:
+      # Dossier partagé dédié « carnet-sync » (data + backups créés automatiquement).
+      - /volume1/carnet-sync:/srv/carnet
+    ports:
+      - "127.0.0.1:8090:8090"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    mem_limit: 512m
+    cpus: 1
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
