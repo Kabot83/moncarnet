@@ -3,7 +3,7 @@
  * déplacement entre le catalogue familial et le carnet personnel.
  * Rien ne s'affiche tant que la synchronisation n'est pas active (carnet local comme avant).
  */
-import { Lock, LockOpen, Users } from 'lucide-react'
+import { CloudOff, Lock, LockOpen, Users } from 'lucide-react'
 import { useConfirm, useToast } from '@/components/ui/Feedback'
 import { relativeTime } from '@/lib/format'
 import type { Recipe } from '@/models/types'
@@ -16,7 +16,14 @@ const infoOf = (r: Recipe) => (r.familyInfo ?? null) as FamilyInfo | null
 /** Petite mention discrète sur les cartes et la fiche. */
 export function SpaceBadge({ recipe, className = '' }: { recipe: Recipe; className?: string }) {
   const s = useSync()
-  if (!syncActive(s) || recipe.isDemo) return null
+  if (!syncActive(s)) return null
+  if (recipe.isDemo)
+    return (
+      <span className={`inline-flex items-center gap-0.5 text-faint ${className}`} title="Recette de démonstration : jamais synchronisée">
+        <CloudOff size={11} strokeWidth={2} />
+        Non synchronisée
+      </span>
+    )
   return isFamily(recipe) ? (
     <span className={`inline-flex items-center gap-0.5 text-terra ${className}`} title="Visible par la famille">
       <Users size={12} strokeWidth={2} />
@@ -34,6 +41,8 @@ export function SpaceBadge({ recipe, className = '' }: { recipe: Recipe; classNa
 export function FamilyLine({ recipe }: { recipe: Recipe }) {
   const s = useSync()
   const info = infoOf(recipe)
+  if (syncActive(s) && recipe.isDemo)
+    return <p className="mt-1 text-xs text-muted">Recette de démonstration : elle reste sur ce téléphone et n’est jamais synchronisée. Pour la partager, menu ⋮ → « En faire une recette familiale ».</p>
   if (!syncActive(s) || !isFamily(recipe) || !info) return null
   const parts = [info.createdBy && `Ajoutée par ${info.createdBy.name}`, info.updatedBy && info.updatedAt && `modifiée par ${info.updatedBy.name} ${relativeTime(info.updatedAt * 1000)}`].filter(Boolean)
   return (
@@ -55,12 +64,7 @@ export function FamilyMenuItems({ recipe, close, Item }: { recipe: Recipe; close
   const s = useSync()
   const confirm = useConfirm()
   const toast = useToast()
-  if (!syncActive(s) || !s.family || recipe.isDemo) return null
-  const info = infoOf(recipe)
-  const mine = info?.createdBy?.login === s.user?.login
-  const admin = s.family.role === 'admin'
-  const others = s.family.members.length - 1
-
+  if (!syncActive(s) || !s.family) return null
   const run = async (f: () => Promise<unknown>, ok: string) => {
     try {
       await f()
@@ -69,6 +73,23 @@ export function FamilyMenuItems({ recipe, close, Item }: { recipe: Recipe; close
       toast.error(e instanceof Error ? e.message : 'Action impossible pour le moment (réseau ?).')
     }
   }
+
+  if (recipe.isDemo) {
+    const adopt = async () => {
+      close()
+      const yes = await confirm({
+        title: 'En faire une recette familiale ?',
+        message: `Cette recette de démonstration deviendra une vraie recette, partagée avec « ${s.family!.name} » (fiche, photos, astuces). Vos favoris et notes restent privés.`,
+        confirmLabel: 'Partager avec la famille',
+      })
+      if (yes) await run(() => syncService.adoptDemoRecipe(recipe.id, 'family'), 'Recette ajoutée au catalogue familial')
+    }
+    return <>{Item({ icon: Users, label: 'En faire une recette familiale', onClick: () => void adopt() })}</>
+  }
+  const info = infoOf(recipe)
+  const mine = info?.createdBy?.login === s.user?.login
+  const admin = s.family.role === 'admin'
+  const others = s.family.members.length - 1
 
   const toFamily = async () => {
     close()

@@ -3,14 +3,16 @@
  * Le mot de passe n'est transmis qu'une fois au stockage sécurisé d'Android pour ouvrir la
  * session ; il n'est ni conservé par l'interface ni enregistré sur le téléphone.
  */
-import { AlertTriangle, CheckCircle2, ChevronRight, CloudOff, GitMerge, LogOut, RefreshCw, Trash2, Users } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronRight, CloudOff, GitMerge, LogOut, RefreshCw, SearchCheck, Trash2, Users } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
 import { useConfirm, useToast } from '@/components/ui/Feedback'
 import { TextInput } from '@/components/ui/Fields'
 import { Page, TopBar } from '@/components/ui/Layout'
+import { db } from '@/db/db'
 import { relativeTime } from '@/lib/format'
+import { deleteDemoData } from '@/services/recipes'
 import { DEFAULT_SYNC_URL, SessionError, normalizeServerUrl } from '@/platform/carnetSync'
 import { syncService, useSync } from '@/sync/instance'
 import type { SyncState } from '@/sync/service'
@@ -101,12 +103,43 @@ export default function SyncSettingsPage() {
   const toast = useToast()
   const confirm = useConfirm()
   const [busy, setBusy] = useState(false)
+  const [check, setCheck] = useState<{ ok: boolean; text: string; items: string[] } | null>(null)
   const connected = ['idle', 'syncing', 'offline', 'error'].includes(s.status)
 
   const syncNow = async () => {
     setBusy(true)
     await syncService.syncNow('manuel')
     setBusy(false)
+  }
+
+  /** Compare chaque élément du téléphone avec le serveur (rien n'est modifié). */
+  const verify = async () => {
+    setBusy(true)
+    setCheck(null)
+    try {
+      await syncService.syncNow('vérification')
+      const v = await syncService.engine.verify()
+      const titles = async (keys: string[]) =>
+        Promise.all(keys.map(async (k) => {
+          const [coll, id] = k.split('/')
+          const r = coll === 'recipes' || coll === 'recipeMeta' ? await db.recipes.get(id) : null
+          return r ? `${r.title}${coll === 'recipeMeta' ? ' (notes personnelles)' : ''}` : k
+        }))
+      const items = [...(await titles(v.missingOnServer)).map((t) => `${t} : absente du serveur`), ...(await titles(v.different)).map((t) => `${t} : différente du serveur`)]
+      setCheck({ ok: v.ok, text: v.ok ? `${v.checked} éléments identiques sur le téléphone et le serveur.` : `${items.length} élément(s) à vérifier sur ${v.checked}.`, items: items.slice(0, 20) })
+    } catch (e) {
+      setCheck({ ok: false, text: e instanceof Error ? e.message : 'Vérification impossible.', items: [] })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeDemo = async () => {
+    const ok = await confirm({ title: 'Supprimer les recettes de démonstration ?', message: 'Elles ne sont jamais synchronisées. Vos recettes, familiales ou privées, ne sont pas concernées.', confirmLabel: 'Supprimer', danger: true })
+    if (!ok) return
+    await deleteDemoData()
+    await syncService.refreshCounters()
+    toast.success('Recettes de démonstration supprimées')
   }
 
   const logout = async () => {
@@ -201,14 +234,41 @@ export default function SyncSettingsPage() {
                 </div>
               )}
               <div className="py-3">
-                <Button size="sm" variant="secondary" icon={<RefreshCw size={16} />} onClick={() => void syncNow()} loading={busy}>
-                  Synchroniser maintenant
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="secondary" icon={<RefreshCw size={16} />} onClick={() => void syncNow()} loading={busy}>
+                    Synchroniser maintenant
+                  </Button>
+                  <Button size="sm" variant="secondary" icon={<SearchCheck size={16} />} onClick={() => void verify()} disabled={busy}>
+                    Vérifier avec le serveur
+                  </Button>
+                </div>
+                {check && (
+                  <div className={`mt-3 rounded-xl p-3 text-sm ${check.ok ? 'bg-sage-soft' : 'bg-danger-soft text-danger'}`}>
+                    <p>{check.text}</p>
+                    {check.items.map((t) => (
+                      <p key={t} className="mt-1 text-xs">• {t}</p>
+                    ))}
+                  </div>
+                )}
                 <p className="mt-2 text-xs text-muted">
                   Inutile en temps normal : l’envoi est automatique après chaque modification, à l’ouverture et au retour du réseau. Android ne permet pas de synchroniser quand l’application est fermée.
                 </p>
               </div>
             </SettingsGroup>
+
+            {s.localOnly > 0 && (
+              <SettingsGroup title="Recettes de démonstration">
+                <div className="space-y-3 py-4 text-sm">
+                  <p>
+                    {s.localOnly} recette{s.localOnly > 1 ? 's' : ''} de démonstration sur ce téléphone : elles ne sont <strong>jamais synchronisées</strong>, même modifiées. Chaque téléphone a ses propres exemplaires, aux mêmes noms.
+                  </p>
+                  <p className="text-muted">Pour en partager une, ouvrez-la puis menu ⋮ → « En faire une recette familiale ».</p>
+                  <Button size="sm" variant="secondary" onClick={() => void removeDemo()}>
+                    Supprimer les recettes de démonstration
+                  </Button>
+                </div>
+              </SettingsGroup>
+            )}
 
             {s.family && (
               <SettingsGroup title="Catalogue familial">

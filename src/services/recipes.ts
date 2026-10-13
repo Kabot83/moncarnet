@@ -75,6 +75,49 @@ async function forNewRecipe(recipe: Recipe): Promise<Recipe> {
   return { ...rest, space: recipe.space ?? (def === 'family' ? 'family' : undefined) }
 }
 
+type Obj = Record<string, unknown>
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+
+/** Liste d'éléments à identifiant : les éléments touchés par l'utilisateur, le reste tel qu'à présent. */
+function rebaseList(base: Obj[], edited: Obj[], current: Obj[]): Obj[] {
+  const b = new Map(base.map((x) => [x.id, x]))
+  const c = new Map(current.map((x) => [x.id, x]))
+  const out: Obj[] = []
+  for (const e of edited) {
+    const bx = b.get(e.id)
+    if (bx && same(e, bx)) {
+      if (c.has(e.id)) out.push(c.get(e.id)!) // inchangé par l'utilisateur : version actuelle
+      continue // inchangé ici et supprimé entre-temps ailleurs : reste supprimé
+    }
+    out.push(e)
+  }
+  const kept = new Set(edited.map((x) => x.id))
+  for (const x of current) if (!kept.has(x.id) && !b.has(x.id)) out.push(x) // ajouté entre-temps (autre appareil)
+  return out
+}
+
+/**
+ * Éditeur ouvert pendant qu'une synchronisation modifiait la recette : seules les modifications
+ * faites dans l'éditeur sont appliquées sur la version actuelle (rien de ce qui a été reçu n'est
+ * écrasé). `base` = recette à l'ouverture de l'éditeur.
+ */
+export function rebaseEdit(base: Recipe, edited: Recipe, current: Recipe): Recipe {
+  const out: Obj = { ...current }
+  const B = base as unknown as Obj
+  const E = edited as unknown as Obj
+  const C = current as unknown as Obj
+  for (const k of new Set([...Object.keys(E), ...Object.keys(B)])) {
+    if (same(E[k], B[k])) continue
+    if ((k === 'ingredients' || k === 'steps') && Array.isArray(E[k]) && Array.isArray(B[k]) && Array.isArray(C[k])) out[k] = rebaseList(B[k] as Obj[], E[k] as Obj[], C[k] as Obj[])
+    else if (k === 'notes' && E[k] && B[k] && C[k]) {
+      const n: Obj = { ...(C[k] as Obj) }
+      for (const sub of Object.keys(E[k] as Obj)) if (!same((E[k] as Obj)[sub], (B[k] as Obj)[sub])) n[sub] = (E[k] as Obj)[sub]
+      out[k] = n
+    } else out[k] = E[k]
+  }
+  return out as unknown as Recipe
+}
+
 /** Valide puis enregistre une recette (création ou mise à jour). */
 export async function saveRecipe(recipe: Recipe, { touch = true } = {}): Promise<Recipe> {
   recipe = await forNewRecipe(recipe)

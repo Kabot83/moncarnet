@@ -254,6 +254,8 @@ export class SyncEngine {
   private family = false
   /** Compte et famille vus lors de la dernière synchronisation. */
   lastMe: Me | null = null
+  /** Éléments refusés pendant cette synchronisation : pas renvoyés avant la suivante. */
+  private refused = new Set<string>()
 
   constructor(
     readonly db: CarnetDB,
@@ -320,6 +322,7 @@ export class SyncEngine {
     const me = await this.checkAccount() // avant tout échange de données
     this.lastMe = me
     const report: SyncReport = { pushed: 0, pulled: 0, conflicts: [], recovered: [], rejected: [], removedFromFamily: 0, waitingForFamily: 0 }
+    this.refused.clear()
     this.family = !!me.family
     const known = (await this.meta.state.get('familyKnown'))?.value === true
     if (me.family && !known) {
@@ -360,6 +363,7 @@ export class SyncEngine {
         report.waitingForFamily++
         continue
       }
+      if (this.refused.has(`${coll}/${id}`)) continue
       const h = await fingerprint(coll, row, space)
       if (!m || m.deleted || m.hash !== h) {
         out.push({ change: { collection: coll, id, space, base_rev: m?.rev ?? 0, data: syncedPart(coll, row, space), updated_at: (row.updatedAt as number) ?? undefined }, row })
@@ -499,6 +503,7 @@ export class SyncEngine {
       case 'conflict':
         return this.resolve(coll, change.id, coll === 'recipeMeta' ? (row ? personalOf(row) : null) : row, res.server, report, space)
       case 'rejected':
+        this.refused.add(`${coll}/${change.id}`)
         report.rejected.push({ collection: coll, id: change.id, error: res.error })
         return this.log(report, { collection: coll, id: change.id, kind: 'rejected', note: res.error })
       // missing_blob : le fichier sera renvoyé au prochain tour (rien n'est marqué synchronisé).

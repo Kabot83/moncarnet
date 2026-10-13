@@ -285,6 +285,18 @@ spaces.create_family(db, 'Le Carnet Familial', 'alice'); spaces.add_member(db, '
     expect((await alice.svc.engine.verify()).ok).toBe(true)
   })
 
+  it('élément refusé par le serveur : signalé comme une erreur, jamais comme une réussie', async () => {
+    // Fiche anormale (plus de 512 Ko, écrite hors de l'éditeur) : le serveur la refuse.
+    await phoneDb.recipes.put({ ...emptyRecipe({ id: 'r_geante', title: 'Géante' }), space: 'family', description: 'x'.repeat(600_000) })
+    await alice.svc.syncNow()
+    expect(alice.svc.state.status).toBe('error')
+    expect(alice.svc.state.lastError).toMatch(/refusé 1 élément/)
+    expect(await phoneDb.recipes.get('r_geante')).toBeTruthy() // rien n'est perdu localement
+    await deleteRecipe('r_geante')
+    await alice.svc.syncNow()
+    expect(alice.svc.state.status).toBe('idle')
+  })
+
   it('session révoquée : synchronisation suspendue, données conservées, reprise après reconnexion', async () => {
     admin(`db.x("UPDATE sessions SET revoked_at = strftime('%s') WHERE user_id = (SELECT id FROM users WHERE login = 'alice')")`)
     await phoneDb.recipes.update('r_secret', { description: 'Modifiée pendant la révocation' })

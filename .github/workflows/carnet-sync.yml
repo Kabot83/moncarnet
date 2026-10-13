@@ -8,7 +8,7 @@ name: Service NAS (Carnet Sync)
 on:
   push:
     branches: [master, carnet-sync]
-    paths: ['nas/carnet-sync/**', 'src/sync/**', 'tests/unit/sync-live.test.ts', 'tests/unit/sync-app-live.test.ts', '.github/workflows/carnet-sync.yml']
+    paths: ['nas/carnet-sync/**', 'src/sync/**', 'tests/unit/sync-live.test.ts', 'tests/unit/sync-app-live.test.ts', 'tests/unit/sync-fields-live.test.ts', 'tests/unit/sync-fuzz-live.test.ts', '.github/workflows/carnet-sync.yml']
   workflow_dispatch:
     inputs:
       publier:
@@ -46,7 +46,7 @@ jobs:
       - name: Bout en bout (moteur de l'application contre le vrai serveur)
         run: |
           npm ci --no-audit --no-fund
-          SYNC_LIVE_PY="$(which python)" npx vitest run tests/unit/sync-live.test.ts tests/unit/sync-app-live.test.ts
+          SYNC_LIVE_PY="$(which python)" npx vitest run tests/unit/sync-live.test.ts tests/unit/sync-app-live.test.ts tests/unit/sync-fields-live.test.ts tests/unit/sync-fuzz-live.test.ts
 
   image:
     needs: tests

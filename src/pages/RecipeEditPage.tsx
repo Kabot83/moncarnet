@@ -15,7 +15,7 @@ import { suggestNonScalable } from '@/lib/scaling'
 import { formatNumber, parseIngredientLine, parseQuantity } from '@/lib/units'
 import { CATEGORIES, DIFFICULTIES, type Draft, type Ingredient, NOTE_FIELDS, type Recipe, type Step } from '@/models/types'
 import { deleteDraft, saveDraft } from '@/services/drafts'
-import { ValidationError, emptyIngredient, emptyRecipe, emptyStep, saveRecipe } from '@/services/recipes'
+import { ValidationError, emptyIngredient, emptyRecipe, emptyStep, rebaseEdit, saveRecipe } from '@/services/recipes'
 import { lockedForMe } from '@/components/SyncRecipe'
 import { syncActive, useSync } from '@/sync/instance'
 import { useSettings } from '@/services/settings'
@@ -117,7 +117,11 @@ export default function RecipeEditPage() {
     }
     setSaving(true)
     try {
-      const saved = await saveRecipe(recipe)
+      // Recette modifiée entre-temps (synchronisation) : seules vos modifications sont appliquées.
+      const current = id ? await db.recipes.get(id) : undefined
+      const base = original.current ? (JSON.parse(original.current) as Recipe | null) : null
+      const toSave = current && base && JSON.stringify(current) !== original.current ? rebaseEdit(base, recipe, current) : recipe
+      const saved = await saveRecipe(toSave)
       await deleteDraft(draftId)
       dirty.current = false
       toast.success(id ? 'Modifications enregistrées' : 'Recette ajoutée à votre carnet')
@@ -158,6 +162,11 @@ export default function RecipeEditPage() {
         }
       />
       <main className="mx-auto max-w-2xl space-y-8 px-4 pt-4 pb-40">
+        {syncActive(sync) && recipe.isDemo && (
+          <div className="rounded-2xl bg-sunken p-3 text-sm" role="status">
+            Recette de démonstration : vos modifications restent sur ce téléphone et ne sont pas synchronisées. Pour la partager, menu ⋮ de la fiche → « En faire une recette familiale ».
+          </div>
+        )}
         {lockedBy && (
           <div className="rounded-2xl bg-terra-soft p-3 text-sm" role="status">
             Recette verrouillée par {lockedBy} : vos modifications seront enregistrées dans une copie privée, l’originale reste inchangée pour la famille.

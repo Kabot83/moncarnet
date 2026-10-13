@@ -48,6 +48,8 @@ export interface SyncState {
   migration: { at: number; ok: boolean; checked: number; issues: string[] } | null
   /** Message ponctuel (retrait de la famille, recettes récupérées…). */
   notice: string | null
+  /** Recettes de démonstration : jamais synchronisées (restent sur ce téléphone). */
+  localOnly: number
 }
 
 const STATE_KEY = 'syncState'
@@ -71,7 +73,7 @@ const isNetworkError = (e: unknown) => e instanceof TypeError || (e instanceof S
 export class SyncService {
   state: SyncState = {
     status: 'signed-out', url: '', user: null, family: null, lastSyncAt: null, lastError: null,
-    pending: 0, synced: { family: 0, personal: 0 }, conflicts: 0, migration: null, notice: null,
+    pending: 0, synced: { family: 0, personal: 0 }, conflicts: 0, migration: null, notice: null, localOnly: 0,
   }
   private listeners = new Set<(s: SyncState) => void>()
   private access: { token: string; exp: number } | null = null
@@ -250,6 +252,11 @@ export class SyncService {
     this.set({ status: 'syncing' })
     try {
       const report = await this.engine.sync()
+      if (report.rejected.length) {
+        // Jamais de « réussie » si le serveur a refusé un élément : il reste en attente, signalé.
+        const r = report.rejected[0]
+        throw new Error(`Le serveur a refusé ${report.rejected.length} élément(s) (${r.collection} « ${r.id} » : ${r.error}). Ils restent sur ce téléphone.`)
+      }
       this.failures = 0
       const at = this.now()
       await this.persist({ lastSyncAt: at })
@@ -288,12 +295,12 @@ export class SyncService {
 
   async refreshCounters(): Promise<void> {
     if (!this.apiInst) return
-    const [pending, synced] = await Promise.all([this.engine.countPending(), this.engine.syncedCounts()])
+    const [pending, synced, localOnly] = await Promise.all([this.engine.countPending(), this.engine.syncedCounts(), this.deps.db.recipes.filter((r) => !!r.isDemo).count()])
     let conflicts = this.state.conflicts
     if (this.state.family && this.state.status !== 'offline') {
       conflicts = await this.api.familyConflicts().then((c) => c.length, () => conflicts)
     }
-    this.set({ pending, synced, conflicts })
+    this.set({ pending, synced, conflicts, localOnly })
   }
 
   /** Synchronisation différée (regroupe les modifications rapprochées). */
@@ -374,6 +381,21 @@ export class SyncService {
   }
 
   // --- Catalogue familial (actions de l'interface) ------------------------------------
+
+  /**
+   * Recette de démonstration → vraie recette (avec l'accord de l'utilisateur) : elle sera
+   * synchronisée, dans l'espace choisi, avec ses photos.
+   */
+  async adoptDemoRecipe(id: string, space: Space): Promise<void> {
+    const { db } = this.deps
+    await db.transaction('rw', db.recipes, db.photos, async () => {
+      const r = await db.recipes.get(id)
+      if (!r?.isDemo) return
+      for (const pid of [r.mainPhotoId, ...r.galleryPhotoIds, ...r.steps.map((x) => x.photoId)]) if (pid) await db.photos.update(pid, { isDemo: false })
+      await db.recipes.update(id, { isDemo: false, space, source: r.source === 'Démonstration Mon Carnet' ? '' : r.source, updatedAt: this.now() })
+    })
+    await this.syncNow('recette adoptée')
+  }
 
   async moveRecipe(id: string, to: Space): Promise<void> {
     await this.engine.moveRecipe(id, to, true) // confirmation déjà donnée dans l'interface

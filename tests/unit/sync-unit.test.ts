@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { db } from '@/db/db'
 import { normalizeServerUrl } from '@/platform/carnetSync'
 import { securityDir } from '@/services/integrity'
-import { NEW_RECIPE_SPACE_KEY, duplicateRecipe, emptyRecipe, saveRecipe } from '@/services/recipes'
+import { NEW_RECIPE_SPACE_KEY, duplicateRecipe, emptyIngredient, emptyRecipe, rebaseEdit, saveRecipe } from '@/services/recipes'
 import { type DeviceBinding, PRIMARY_DB, SIGNED_OUT_DB, localDbName, signIn, signOut } from '@/sync/binding'
 import { applyChoice, applyChoices, describePath, describeValue } from '@/sync/conflicts'
 
@@ -93,5 +93,31 @@ describe('résolution manuelle d’un conflit familial', () => {
     expect(describeValue('ingredients[i1]', items[0].mine)).toBe('1200 g pommes de terre')
     expect(describeValue('ingredients[i2]', null)).toBe('(supprimé)')
     expect(describePath('notes.tips', items[1])).toBe('Astuces')
+  })
+})
+
+describe('éditeur ouvert pendant une synchronisation', () => {
+  const base = emptyRecipe({
+    id: 'r_1', title: 'Soupe', description: 'Simple',
+    ingredients: [emptyIngredient({ id: 'i1', name: 'oignons', quantity: 4 }), emptyIngredient({ id: 'i2', name: 'beurre', quantity: 30 })],
+  })
+
+  it('seules mes modifications s’appliquent : ce qui a été reçu entre-temps n’est pas écrasé', () => {
+    // Pendant l'édition, Jona a changé le titre, une quantité, ajouté et retiré des ingrédients.
+    const current = { ...base, title: 'Soupe de Jona', ingredients: [{ ...base.ingredients[0], quantity: 6 }, emptyIngredient({ id: 'i3', name: 'gruyère', quantity: 100 })] }
+    // Moi : la description et le nom du premier ingrédient… et rien d'autre.
+    const edited = { ...base, description: 'Réconfortante', ingredients: [{ ...base.ingredients[0], name: 'oignons doux' }, base.ingredients[1]] }
+    const r = rebaseEdit(base, edited, current)
+    expect(r.title).toBe('Soupe de Jona') // reçu : conservé
+    expect(r.description).toBe('Réconfortante') // ma modification : appliquée
+    expect(r.ingredients.map((i) => [i.id, i.name, i.quantity])).toEqual([
+      ['i1', 'oignons doux', 4], // je l'ai modifié : ma version de l'élément
+      ['i3', 'gruyère', 100], // ajouté par Jona : conservé ; i2, retiré par Jona et inchangé ici : reste retiré
+    ])
+  })
+
+  it('aucune synchronisation entre-temps : la fiche enregistrée est exactement celle de l’éditeur', () => {
+    const edited = { ...base, description: 'Réconfortante' }
+    expect(rebaseEdit(base, edited, base)).toEqual(edited)
   })
 })
