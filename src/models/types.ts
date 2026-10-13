@@ -211,7 +211,9 @@ export const RecipeSchema = z.object({
   /** Auteur, dernier modificateur, verrou d'une recette familiale (fournis par le serveur). */
   familyInfo: z.record(z.string(), z.unknown()).optional(),
   /** Recette reçue d'un autre compte (« Reçue de … »). */
-  receivedFrom: z.object({ login: z.string(), name: z.string(), at: z.number(), transferId: z.string() }).optional(),
+  receivedFrom: z.object({ login: z.string(), name: z.string(), at: z.number(), transferId: z.string(), sourceKey: z.string().optional() }).optional(),
+  /** Copie privée issue de l'ancien catalogue familial (conversion en carnets privés). */
+  copiedFromFamily: z.object({ recipeId: z.string(), at: z.number() }).optional(),
 })
 export type Recipe = z.infer<typeof RecipeSchema>
 
@@ -504,6 +506,8 @@ export interface Draft {
   origin: 'manual' | 'edit' | 'url' | 'photo' | 'text' | 'ai' | 'variant' | 'social'
   /** Points à vérifier signalés par l'import. */
   warnings?: string[]
+  /** Recette telle qu'elle était quand la modification a commencé (fusion à l'enregistrement). */
+  base?: Recipe | null
   updatedAt: number
 }
 

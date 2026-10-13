@@ -3,6 +3,8 @@
   python -m app.admin setup                     → premier compte + famille (interactif, mot de passe masqué)
   python -m app.admin user create               → autre compte (interactif) ; ou invite create --family
   python -m app.admin family show | family add <login> | family remove <login> | family role <login> admin|member
+  python -m app.admin family privatize [--apply]  → copie privée de chaque recette familiale pour chaque membre
+                                                  (simulation sans --apply ; rien n'est supprimé ni déplacé)
   python -m app.admin user list | user disable <login> | user reset-password <login>
   python -m app.admin invite create --note "…" [--family] → code d'invitation (7 jours, usage unique)
   python -m app.admin backup                    → sauvegarde immédiate (comme celle de la nuit)
@@ -129,6 +131,7 @@ def main(argv: list[str] | None = None) -> None:
     f.add_parser('show')
     f.add_parser('add').add_argument('login')
     f.add_parser('remove').add_argument('login')
+    f.add_parser('privatize').add_argument('--apply', action='store_true')
     fr = f.add_parser('role')
     fr.add_argument('login')
     fr.add_argument('role', choices=['admin', 'member'])
@@ -215,6 +218,14 @@ def main(argv: list[str] | None = None) -> None:
             spaces.remove_member(db, a.login)
             print(f'{a.login} n’a plus accès au catalogue familial (effet immédiat). Ses données personnelles sont conservées.')
             print('Ses appareils retireront les recettes familiales à leur prochaine connexion ; une copie déjà faite hors ligne ne peut pas être effacée à distance.')
+        elif a.action == 'privatize':
+            from .family import privatize
+
+            r = privatize(db, s, apply=a.apply)
+            print(('Copies créées' if a.apply else 'SIMULATION (rien n’est écrit ; ajoutez --apply)') + f" — {r['recipes']} recette(s) familiale(s) :")
+            for m in r['members']:
+                print(f"  {m['login']} : {m['copies']} copie(s) privée(s), {m['photos']} photo(s), {m['already']} déjà faite(s), {m['relinked']} lien(s) de journal/collection rattaché(s)")
+            print('Le catalogue familial reste intact : son retrait est une étape distincte, après vérification.')
         elif a.action == 'role':
             spaces.set_role(db, a.login, a.role)
             print('Rôle modifié.')

@@ -6,9 +6,9 @@ import { Sheet } from './ui/Sheet'
 import { useSync } from '@/sync/instance'
 import type { SyncState } from '@/sync/service'
 
-/** Point discret sur « Réglages » : modifications en attente faute de réseau, conflit, reconnexion. */
+/** Point discret sur « Réglages » : recette reçue, modifications en attente faute de réseau, conflit, reconnexion. */
 const needsAttention = (s: SyncState) =>
-  s.status === 'revoked' || s.status === 'needs-migration' || s.status === 'error' || s.conflicts > 0 || (s.status === 'offline' && s.pending > 0)
+  s.status === 'revoked' || s.status === 'needs-migration' || s.status === 'error' || s.conflicts > 0 || s.received > 0 || (s.status === 'offline' && s.pending > 0)
 
 const TABS = [
   { to: '/', label: 'Accueil', icon: Home, end: true },

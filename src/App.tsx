@@ -41,6 +41,7 @@ const SyncSettingsPage = lazy(() => import('./pages/SyncSettingsPage'))
 const SyncMigrationPage = lazy(() => import('./pages/SyncMigrationPage'))
 const SyncConflictsPage = lazy(() => import('./pages/SyncConflictsPage'))
 const SyncTrashPage = lazy(() => import('./pages/SyncTrashPage'))
+const ReceivedRecipesPage = lazy(() => import('./pages/ReceivedRecipesPage'))
 
 /** Démarrage unique (même si React monte deux fois en mode strict). */
 let boot: Promise<void> | null = null
@@ -157,6 +158,7 @@ export function App() {
           <Route path="/reglages/synchronisation/migration" element={<SyncMigrationPage />} />
           <Route path="/reglages/synchronisation/conflits" element={<SyncConflictsPage />} />
           <Route path="/reglages/synchronisation/corbeille" element={<SyncTrashPage />} />
+          <Route path="/recettes-recues" element={<ReceivedRecipesPage />} />
           <Route path="*" element={<HomePage />} />
         </Routes>
       </Suspense>

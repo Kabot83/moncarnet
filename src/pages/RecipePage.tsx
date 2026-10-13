@@ -16,6 +16,7 @@ import {
   PenLine,
   Play,
   Share2,
+  Send,
   ShoppingBasket,
   Sparkles,
   Thermometer,
@@ -25,7 +26,9 @@ import {
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { CollectionPicker } from '@/components/CollectionPicker'
-import { FamilyLine, FamilyMenuItems, SpaceBadge, isFamily } from '@/components/SyncRecipe'
+import { FamilyLine, FamilyMenuItems, ReceivedLine, SpaceBadge, isFamily } from '@/components/SyncRecipe'
+import { ShareToUserSheet } from '@/components/ShareToUserSheet'
+import { syncActive, useSync } from '@/sync/instance'
 import { IngredientScaler } from '@/components/IngredientScaler'
 import { JournalEntrySheet } from '@/components/JournalEntrySheet'
 import { NotesSection } from '@/components/NotesSection'
@@ -62,6 +65,8 @@ export default function RecipePage() {
   const scale = session?.scale ?? IDENTITY_SCALE
 
   const [menuOpen, setMenuOpen] = useState(false)
+  const [shareUserOpen, setShareUserOpen] = useState(false)
+  const sync = useSync()
   const [journalOpen, setJournalOpen] = useState(false)
   const [collectionsOpen, setCollectionsOpen] = useState(false)
   const [shoppingOpen, setShoppingOpen] = useState(false)
@@ -168,6 +173,7 @@ export default function RecipePage() {
           </p>
           <h1 className="mt-1.5 font-serif text-[2rem] leading-[1.15] font-semibold">{recipe.title}</h1>
           <FamilyLine recipe={recipe} />
+          <ReceivedLine recipe={recipe} />
           {parent && (
             <p className="mt-1 text-sm text-muted">
               Variante de{' '}
@@ -403,10 +409,15 @@ export default function RecipePage() {
             }}
           />
           <MenuItem icon={Share2} label="Partager en texte" onClick={() => (setMenuOpen(false), void share())} />
+          {syncActive(sync) && !recipe.isDemo && (
+            <MenuItem icon={Send} label="Partager avec un utilisateur" onClick={() => (setMenuOpen(false), setShareUserOpen(true))} />
+          )}
           <FamilyMenuItems recipe={recipe} close={() => setMenuOpen(false)} Item={(p) => <MenuItem key={p.label} {...p} />} />
           <MenuItem icon={Trash2} label="Supprimer" danger onClick={() => void remove()} />
         </nav>
       </Sheet>
+
+      <ShareToUserSheet recipe={recipe} open={shareUserOpen} onClose={() => setShareUserOpen(false)} />
 
       <Sheet open={!!ingMenu} onClose={() => setIngMenu(null)} title={ingMenu?.name}>
         <nav className="grid gap-1 pb-2">

@@ -179,9 +179,11 @@ spaces.create_family(db, 'Le Carnet Familial', 'alice'); spaces.add_member(db, '
 
   it('création et modification hors ligne : gardées sur le téléphone, envoyées au retour du réseau', async () => {
     net.online = false
-    const nouvelle = await saveRecipe(emptyRecipe({ title: 'Gratin', ingredients: [emptyIngredient({ id: 'i1', name: 'pommes de terre', quantity: 1000, unit: 'g' })], steps: [emptyStep({ id: 's1', text: 'Cuire' })] }))
-    expect(nouvelle.space).toBe('family') // familiale par défaut
-    const privee = await saveRecipe({ ...emptyRecipe({ title: 'Mon brouillon' }), space: 'personal' }) // « Garder privée »
+    // Ancienne recette du catalogue familial (créée en 1.5.x) : toujours partagée jusqu'à sa conversion.
+    const nouvelle = await saveRecipe({ ...emptyRecipe({ title: 'Gratin', ingredients: [emptyIngredient({ id: 'i1', name: 'pommes de terre', quantity: 1000, unit: 'g' })], steps: [emptyStep({ id: 's1', text: 'Cuire' })] }), space: 'family' })
+    // 1.6.0 : une nouvelle recette est PRIVÉE par défaut.
+    const privee = await saveRecipe(emptyRecipe({ title: 'Mon brouillon' }))
+    expect(privee.space).toBeUndefined()
     await phoneDb.recipes.update('r_tarte', { description: 'Avec cannelle' })
     await alice.svc.syncNow()
     expect(alice.svc.state.status).toBe('offline')

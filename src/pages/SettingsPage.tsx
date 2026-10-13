@@ -18,9 +18,10 @@ import type { SyncState } from '@/sync/service'
 
 function syncDetail(s: SyncState): string {
   if (s.status === 'unavailable') return 'Dans l’application Android'
-  if (s.status === 'signed-out') return 'Catalogue familial partagé — non connecté'
+  if (s.status === 'signed-out') return 'Mon carnet sur tous mes appareils — non connecté'
   if (s.status === 'needs-migration') return 'Première synchronisation à préparer'
   if (s.status === 'revoked') return 'Session expirée — reconnexion nécessaire'
+  if (s.received) return `${s.received} recette${s.received > 1 ? 's' : ''} reçue${s.received > 1 ? 's' : ''} à accepter ou refuser`
   if (s.conflicts) return `${s.conflicts} modification(s) à revoir`
   if (s.status === 'offline') return s.pending ? `${s.pending} modification(s) en attente de connexion` : 'Hors connexion'
   if (s.status === 'error') return 'Erreur — voir le détail'

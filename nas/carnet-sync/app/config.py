@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-VERSION = '0.2.0'
+VERSION = '0.2.1'
 
 # Collections synchronisées : liste fermée (tables Dexie de Mon Carnet + partie personnelle des
 # recettes familiales, « recipeMeta »).

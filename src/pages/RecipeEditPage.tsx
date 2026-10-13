@@ -15,7 +15,7 @@ import { suggestNonScalable } from '@/lib/scaling'
 import { formatNumber, parseIngredientLine, parseQuantity } from '@/lib/units'
 import { CATEGORIES, DIFFICULTIES, type Draft, type Ingredient, NOTE_FIELDS, type Recipe, type Step } from '@/models/types'
 import { deleteDraft, saveDraft } from '@/services/drafts'
-import { ValidationError, emptyIngredient, emptyRecipe, emptyStep, rebaseEdit, saveRecipe } from '@/services/recipes'
+import { ValidationError, clashLabel, emptyIngredient, emptyRecipe, emptyStep, rebaseEditDetailed, saveRecipe } from '@/services/recipes'
 import { lockedForMe } from '@/components/SyncRecipe'
 import { syncActive, useSync } from '@/sync/instance'
 import { useSettings } from '@/services/settings'
@@ -51,6 +51,9 @@ export default function RecipeEditPage() {
   const [bulkOpen, setBulkOpen] = useState(false)
   const dirty = useRef(false)
   const original = useRef<string>('')
+  /** Version de la recette sur laquelle porte la modification (fusion à l'enregistrement). */
+  const baseRef = useRef<Recipe | null>(null)
+  const [syncNote, setSyncNote] = useState<string | null>(null)
 
   // Chargement : brouillon en cours, recette existante ou fiche vierge.
   useEffect(() => {
@@ -61,6 +64,8 @@ export default function RecipeEditPage() {
       if (!alive) return
       if (id && !existing) return setNotFound(true)
       if (draft && (!existing || draft.updatedAt > existing.updatedAt)) {
+        // Brouillon : il porte sur la version d'où il est parti, pas sur l'actuelle.
+        baseRef.current = draft.base ?? existing ?? null
         setRecipe(draft.data)
         setOrigin(draft.origin)
         setWarnings(draft.warnings ?? [])
@@ -69,6 +74,7 @@ export default function RecipeEditPage() {
         dirty.current = draft.origin === 'manual' || draft.origin === 'edit'
       } else {
         const r = existing ?? emptyRecipe({ title: '', ingredients: [emptyIngredient()], steps: [emptyStep()] })
+        baseRef.current = existing ?? null
         setRecipe(r)
         setOrigin(id ? 'edit' : 'manual')
         original.current = JSON.stringify(r)
@@ -85,7 +91,7 @@ export default function RecipeEditPage() {
     const json = JSON.stringify(recipe)
     if (json === original.current && origin !== 'url' && origin !== 'photo' && origin !== 'text' && origin !== 'ai') return
     dirty.current = json !== original.current
-    const t = setTimeout(() => void saveDraft({ id: draftId, data: recipe, origin, warnings, updatedAt: Date.now() }), 500)
+    const t = setTimeout(() => void saveDraft({ id: draftId, data: recipe, origin, warnings, base: baseRef.current, updatedAt: Date.now() }), 500)
     return () => clearTimeout(t)
   }, [recipe, draftId, origin, warnings])
 
@@ -117,10 +123,29 @@ export default function RecipeEditPage() {
     }
     setSaving(true)
     try {
-      // Recette modifiée entre-temps (synchronisation) : seules vos modifications sont appliquées.
+      // Recette modifiée entre-temps (autre appareil) : seules vos modifications sont appliquées ;
+      // un même élément modifié des deux côtés n'est jamais tranché en silence.
       const current = id ? await db.recipes.get(id) : undefined
-      const base = original.current ? (JSON.parse(original.current) as Recipe | null) : null
-      const toSave = current && base && JSON.stringify(current) !== original.current ? rebaseEdit(base, recipe, current) : recipe
+      const base = baseRef.current
+      let toSave = recipe
+      if (current && base && JSON.stringify(current) !== JSON.stringify(base)) {
+        const r = rebaseEditDetailed(base, recipe, current)
+        if (r.clashes.length) {
+          const labels = r.clashes.map((c) => clashLabel(c, current)).join(', ')
+          const keepMine = await confirm({
+            title: 'Modifiée aussi sur un autre appareil',
+            message: `Pendant votre modification, ces éléments ont été changés ailleurs : ${labels}. Garder votre version ? « Annuler » affiche l’autre version pour vérifier avant d’enregistrer.`,
+            confirmLabel: 'Garder ma version',
+          })
+          if (!keepMine) {
+            setRecipe(rebaseEditDetailed(base, recipe, current, true).recipe)
+            baseRef.current = current
+            setSyncNote(`Mis à jour depuis un autre appareil : ${labels}. Vérifiez puis enregistrez.`)
+            return
+          }
+        }
+        toSave = r.recipe
+      }
       const saved = await saveRecipe(toSave)
       await deleteDraft(draftId)
       dirty.current = false
@@ -162,6 +187,11 @@ export default function RecipeEditPage() {
         }
       />
       <main className="mx-auto max-w-2xl space-y-8 px-4 pt-4 pb-40">
+        {syncNote && (
+          <div className="rounded-2xl bg-terra-soft p-3 text-sm" role="status">
+            {syncNote}
+          </div>
+        )}
         {syncActive(sync) && recipe.isDemo && (
           <div className="rounded-2xl bg-sunken p-3 text-sm" role="status">
             Recette de démonstration : vos modifications restent sur ce téléphone et ne sont pas synchronisées. Pour la partager, menu ⋮ de la fiche → « En faire une recette familiale ».
@@ -289,7 +319,7 @@ export default function RecipeEditPage() {
 
         <section className="space-y-4">
           <h2 className="font-serif text-xl font-semibold">Mes notes</h2>
-          {familyOn && (recipe.space === 'family' || (!id && recipe.space !== 'personal')) && (
+          {familyOn && recipe.space === 'family' && (
             <p className="text-sm text-muted">Les astuces sont partagées avec la famille ; vos autres notes restent privées.</p>
           )}
           {NOTE_FIELDS.map((f) => (
@@ -305,20 +335,12 @@ export default function RecipeEditPage() {
           <div className="divide-y divide-line rounded-2xl bg-paper px-4">
             <Switch label="Favorite" checked={recipe.favorite} onChange={(v) => set({ favorite: v })} />
             <Switch label="À essayer" description="Recette pas encore testée." checked={recipe.toTry} onChange={(v) => set({ toTry: v })} />
-            {familyOn && !id && (
-              <Switch
-                label="Garder privée"
-                description={recipe.space === 'personal' ? 'Visible de vous seul.' : `Partagée avec « ${sync.family!.name} » à l’enregistrement.`}
-                checked={recipe.space === 'personal'}
-                onChange={(v) => set({ space: v ? 'personal' : 'family' })}
-              />
-            )}
           </div>
-          {familyOn && id && (
+          {familyOn && id && recipe.space === 'family' && (
             <p className="text-sm text-muted">
               {recipe.space === 'family'
                 ? `Recette familiale : vos modifications seront visibles par « ${sync.family!.name} ». Pour la garder privée, utilisez « Retirer du catalogue familial » dans le menu de la fiche.`
-                : 'Recette privée : visible de vous seul. Pour la partager, utilisez « Partager avec la famille » dans le menu de la fiche.'}
+                : 'Recette privée : visible de vous seul, sur vos appareils. Pour en envoyer une copie, utilisez « Partager avec un utilisateur » dans la fiche.'}
             </p>
           )}
         </section>

@@ -3,7 +3,7 @@
  * Le mot de passe n'est transmis qu'une fois au stockage sécurisé d'Android pour ouvrir la
  * session ; il n'est ni conservé par l'interface ni enregistré sur le téléphone.
  */
-import { AlertTriangle, CheckCircle2, ChevronRight, CloudOff, GitMerge, LogOut, RefreshCw, SearchCheck, Trash2, Users } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronRight, CloudOff, GitMerge, Inbox, LogOut, RefreshCw, SearchCheck, Trash2, Users } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
@@ -171,7 +171,7 @@ export default function SyncSettingsPage() {
             {s.status === 'revoked' && <p className="pt-4 text-sm text-muted">{s.lastError}</p>}
             {s.status === 'signed-out' && (
               <p className="pt-4 text-sm text-muted">
-                Retrouvez le catalogue familial sur tous vos appareils. Vos favoris, notes, journal et listes restent personnels.
+                Retrouvez votre carnet sur tous vos appareils, et partagez une recette avec un proche quand vous le souhaitez. Votre carnet reste privé.
               </p>
             )}
             <LoginForm state={s} />
@@ -256,13 +256,18 @@ export default function SyncSettingsPage() {
               </div>
             </SettingsGroup>
 
+            <SettingsGroup title="Partage">
+              <LinkRow to="/recettes-recues" icon={<Inbox size={18} />} label="Recettes reçues" detail={s.received ? `${s.received} en attente de votre décision` : 'Aucune en attente'} />
+              <p className="py-3 text-xs text-muted">Pour envoyer une recette : ouvrez-la, menu ⋮ → « Partager avec un utilisateur ». La personne reçoit une copie indépendante.</p>
+            </SettingsGroup>
+
             {s.localOnly > 0 && (
               <SettingsGroup title="Recettes de démonstration">
                 <div className="space-y-3 py-4 text-sm">
                   <p>
                     {s.localOnly} recette{s.localOnly > 1 ? 's' : ''} de démonstration sur ce téléphone : elles ne sont <strong>jamais synchronisées</strong>, même modifiées. Chaque téléphone a ses propres exemplaires, aux mêmes noms.
                   </p>
-                  <p className="text-muted">Pour en partager une, ouvrez-la puis menu ⋮ → « En faire une recette familiale ».</p>
+                  <p className="text-muted">Pour en garder une dans votre carnet, ouvrez-la puis menu ⋮ → « En faire ma recette ».</p>
                   <Button size="sm" variant="secondary" onClick={() => void removeDemo()}>
                     Supprimer les recettes de démonstration
                   </Button>
@@ -271,7 +276,7 @@ export default function SyncSettingsPage() {
             )}
 
             {s.family && (
-              <SettingsGroup title="Catalogue familial">
+              <SettingsGroup title="Ancien catalogue familial">
                 <LinkRow to="/reglages/synchronisation/conflits" icon={<GitMerge size={18} />} label="Modifications à revoir" detail={s.conflicts ? `${s.conflicts} conflit${s.conflicts > 1 ? 's' : ''} à résoudre` : 'Aucun conflit'} />
                 <LinkRow to="/reglages/synchronisation/corbeille" icon={<Trash2 size={18} />} label="Corbeille familiale" detail="Recettes supprimées, restaurables 30 jours" />
                 <div className="flex items-center gap-3 py-3.5 text-sm text-muted">

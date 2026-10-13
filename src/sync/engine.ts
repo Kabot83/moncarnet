@@ -754,6 +754,12 @@ export class SyncEngine {
     return n
   }
 
+  /** La version actuelle de cette recette est enregistrée sur le serveur (avant un partage). */
+  async isSynced(id: string): Promise<boolean> {
+    const [row, m] = await Promise.all([this.table('recipes').get(id), this.meta.meta.get(['recipes', id])])
+    return !!row && !!m && !m.deleted && m.hash === (await fingerprint('recipes', row, m.space))
+  }
+
   /** Recettes synchronisées, par espace. */
   async syncedCounts(): Promise<{ family: number; personal: number }> {
     const ms = await this.meta.meta.where('collection').equals('recipes').toArray()

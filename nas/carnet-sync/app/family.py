@@ -292,3 +292,71 @@ def move(db: Database, s: Settings, a: Access, rid: str, to: str, confirm: bool)
                 write_simple(c, a.personal, 'recipeMeta', rid, a.user_id, None)
             return {'id': rid, 'space': 'personal'}
     raise FamilyError('invalid_space', 'Destination inconnue.', 422)
+
+
+# --- Conversion du catalogue familial en carnets privés (commande d'administration) ---------
+
+def _pid(*parts: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(':'.join(parts).encode()).hexdigest()[:20]
+
+
+def privatize(db: Database, s: Settings, apply: bool = False) -> dict:
+    """Copie PRIVÉE et indépendante de chaque recette familiale pour chaque membre actif : fiche,
+    photos (fichiers copiés), et ses propres favoris / note / notes personnelles ; son journal, ses
+    collections et ses publications sont rattachés à sa copie.
+    Rien n'est supprimé ni déplacé : le catalogue familial reste intact (retrait ultérieur, à part).
+    Simulation par défaut ; `apply` écrit. Rejouable sans doublon (identifiants déterministes)."""
+    from .spaces import family_id
+
+    fid = family_id(db)
+    if not fid:
+        return {'members': [], 'recipes': 0}
+    recipes = db.q("SELECT id, data FROM records WHERE space_id = ? AND collection = 'recipes' AND deleted = 0 AND trashed_at IS NULL ORDER BY id", (fid,))
+    members = db.q("SELECT u.id AS uid, u.login, s.id AS pid FROM space_members m JOIN users u ON u.id = m.user_id JOIN spaces s ON s.owner_id = u.id AND s.kind = 'personal' WHERE m.space_id = ? AND m.removed_at IS NULL ORDER BY u.login", (fid,))
+    report = {'recipes': len(recipes), 'apply': apply, 'members': []}
+    for m in members:
+        mine = {'login': m['login'], 'copies': 0, 'already': 0, 'photos': 0, 'relinked': 0}
+        with db.tx() as c:
+            for r in recipes:
+                new_id = f"rp_{_pid(m['uid'], r['id'])}"
+                if c.execute("SELECT 1 FROM records WHERE space_id = ? AND collection = 'recipes' AND id = ? AND deleted = 0", (m['pid'], new_id)).fetchone():
+                    mine['already'] += 1
+                    continue
+                shared = json.loads(r['data'])
+                meta = c.execute("SELECT data FROM records WHERE space_id = ? AND collection = 'recipeMeta' AND id = ? AND deleted = 0", (m['pid'], r['id'])).fetchone()
+                mapping = {}
+                for pid in _photo_ids(shared):
+                    rec = c.execute("SELECT data FROM records WHERE space_id = ? AND collection = 'photos' AND id = ? AND deleted = 0", (fid, pid)).fetchone()
+                    if not rec:
+                        continue
+                    npid = f"pp_{_pid(m['uid'], pid)}"
+                    mapping[pid] = npid
+                    mine['photos'] += 1
+                    if apply:
+                        pd = json.loads(rec['data'])
+                        for sha in {pd.get('sha256'), pd.get('thumbSha256')} - {None, ''}:
+                            b = c.execute('SELECT mime FROM blobs WHERE space_id = ? AND sha256 = ?', (fid, sha)).fetchone()
+                            if b:
+                                copy_blob(c, s, blob_path(s, fid, sha), m['pid'], sha, b['mime'])
+                        write_simple(c, m['pid'], 'photos', npid, m['uid'], canon({**pd, 'id': npid}))
+                data = {**join(_remap(shared, mapping), json.loads(meta['data']) if meta else None), 'id': new_id, 'copiedFromFamily': {'recipeId': r['id'], 'at': now()}}
+                mine['copies'] += 1
+                if not apply:
+                    continue
+                write_simple(c, m['pid'], 'recipes', new_id, m['uid'], canon(data))
+                # Son journal, ses collections, ses publications suivent sa copie.
+                for coll, fix in (('journal', 'recipeId'), ('posts', 'recipeId'), ('collections', 'recipeIds')):
+                    for row in c.execute('SELECT id, data FROM records WHERE space_id = ? AND collection = ? AND deleted = 0 AND instr(data, ?) > 0', (m['pid'], coll, json.dumps(r['id']))).fetchall():
+                        d = json.loads(row['data'])
+                        if fix == 'recipeIds' and r['id'] in (d.get('recipeIds') or []):
+                            d['recipeIds'] = [new_id if x == r['id'] else x for x in d['recipeIds']]
+                        elif d.get(fix) == r['id']:
+                            d[fix] = new_id
+                        else:
+                            continue
+                        write_simple(c, m['pid'], coll, row['id'], m['uid'], canon(d))
+                        mine['relinked'] += 1
+        report['members'].append(mine)
+    return report

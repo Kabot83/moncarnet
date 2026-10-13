@@ -50,6 +50,8 @@ export interface SyncState {
   notice: string | null
   /** Recettes de démonstration : jamais synchronisées (restent sur ce téléphone). */
   localOnly: number
+  /** Recettes reçues d'autres utilisateurs, en attente de décision. */
+  received: number
 }
 
 const STATE_KEY = 'syncState'
@@ -73,7 +75,7 @@ const isNetworkError = (e: unknown) => e instanceof TypeError || (e instanceof S
 export class SyncService {
   state: SyncState = {
     status: 'signed-out', url: '', user: null, family: null, lastSyncAt: null, lastError: null,
-    pending: 0, synced: { family: 0, personal: 0 }, conflicts: 0, migration: null, notice: null, localOnly: 0,
+    pending: 0, synced: { family: 0, personal: 0 }, conflicts: 0, migration: null, notice: null, localOnly: 0, received: 0,
   }
   private listeners = new Set<(s: SyncState) => void>()
   private access: { token: string; exp: number } | null = null
@@ -286,21 +288,24 @@ export class SyncService {
     this.schedule(Math.min(15 * 60_000, 30_000 * 2 ** Math.min(this.failures - 1, 5)))
   }
 
-  /** Nouvelles recettes : familiales par défaut quand le carnet est lié à un compte membre d'une famille. */
+  /**
+   * Nouvelles recettes : TOUJOURS privées (carnet personnel, synchronisé entre ses appareils).
+   * Le réglage « familiales par défaut » des versions 1.5.x est retiré ; les recettes déjà
+   * familiales restent inchangées.
+   */
   private async updateDefaults() {
-    const { db } = this.deps
-    if (this.state.family) await db.settings.put({ key: NEW_RECIPE_SPACE_KEY, value: 'family' })
-    else await db.settings.delete(NEW_RECIPE_SPACE_KEY)
+    await this.deps.db.settings.delete(NEW_RECIPE_SPACE_KEY)
   }
 
   async refreshCounters(): Promise<void> {
     if (!this.apiInst) return
     const [pending, synced, localOnly] = await Promise.all([this.engine.countPending(), this.engine.syncedCounts(), this.deps.db.recipes.filter((r) => !!r.isDemo).count()])
-    let conflicts = this.state.conflicts
-    if (this.state.family && this.state.status !== 'offline') {
-      conflicts = await this.api.familyConflicts().then((c) => c.length, () => conflicts)
+    let { conflicts, received } = this.state
+    if (this.state.status !== 'offline') {
+      if (this.state.family) conflicts = await this.api.familyConflicts().then((c) => c.length, () => conflicts)
+      received = await this.api.inbox().then((x) => x.filter((t) => t.kind === 'recipe').length, () => received)
     }
-    this.set({ pending, synced, conflicts, localOnly })
+    this.set({ pending, synced, conflicts, localOnly, received })
   }
 
   /** Synchronisation différée (regroupe les modifications rapprochées). */
@@ -381,6 +386,40 @@ export class SyncService {
   }
 
   // --- Catalogue familial (actions de l'interface) ------------------------------------
+
+  // --- Partage avec un autre utilisateur (copie indépendante, après acceptation) ---------
+
+  /**
+   * Envoie la version ENREGISTRÉE SUR LE SERVEUR de la recette : elle est d'abord synchronisée ;
+   * si ce n'est pas possible (hors connexion), rien n'est envoyé.
+   */
+  async shareRecipe(recipeId: string, login: string, includeTips: boolean): Promise<{ to: string }> {
+    await this.syncNow('partage')
+    if (!(await this.engine.isSynced(recipeId))) {
+      throw new Error('La dernière version de cette recette n’est pas encore sur le serveur (connexion ?) : réessayez dans un instant.')
+    }
+    const who = await this.api.lookupUser(login.trim().toLowerCase())
+    if (!who) throw new Error('Aucun utilisateur avec cet identifiant.')
+    await this.api.sendTransfer(who.login, 'recipe', recipeId, includeTips)
+    return { to: who.display_name }
+  }
+
+  /**
+   * Décision sur une recette reçue : ajout (nouvelle recette), mise à jour de ma copie existante
+   * (après confirmation dans l'interface), ou refus. Rien n'est jamais remplacé implicitement.
+   */
+  async decideReceived(transferId: string, choice: { kind: 'add' } | { kind: 'replace'; targetId: string } | { kind: 'decline' }): Promise<string | null> {
+    if (choice.kind === 'decline') {
+      await this.api.declineTransfer(transferId)
+      await this.refreshCounters()
+      return null
+    }
+    // Mes modifications locales en attente partent d'abord (aucune perte, aucun conflit inutile).
+    if (choice.kind === 'replace') await this.syncNow('avant remplacement')
+    const r = await this.api.acceptTransfer(transferId, choice.kind === 'replace' ? { mode: 'replace', targetId: choice.targetId } : undefined)
+    await this.syncNow('recette reçue')
+    return r.id
+  }
 
   /**
    * Recette de démonstration → vraie recette (avec l'accord de l'utilisateur) : elle sera

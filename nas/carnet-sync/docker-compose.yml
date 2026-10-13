@@ -9,7 +9,7 @@
 #   - 1030:100 : UID:GID du compte technique « carnet-sync » (voir README, étape 3)
 services:
   carnet-sync:
-    image: ghcr.io/kabot83/carnet-sync:0.2.0
+    image: ghcr.io/kabot83/carnet-sync:0.2.1
     container_name: carnet-sync
     restart: unless-stopped
     user: "1030:100"

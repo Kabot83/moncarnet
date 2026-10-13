@@ -1,4 +1,41 @@
-# Carnet Sync 0.2 — catalogue familial et carnet personnel
+# Carnet Sync 0.2.1 — carnet privé par compte, partage par copie
+
+> **Modèle retenu (Mon Carnet 1.6.0).** Chaque compte a son carnet **privé**, synchronisé entre ses
+> propres appareils. Une recette se **partage** volontairement avec un autre utilisateur, qui reçoit
+> une **copie indépendante** après acceptation. Aucune nouvelle recette collaborative : le catalogue
+> familial ci-dessous ne concerne plus que les recettes créées en 1.5.x, jusqu'à leur conversion en
+> copies privées (section « Conversion du catalogue familial »).
+
+## Nouveautés 0.2.1 (aucun changement de la base : installable par-dessus la 0.2.0)
+
+- **Repartage d'une nouvelle version.** Chaque envoi porte un identifiant opaque et stable de la
+  recette d'origine (`source_key`, sans identifiant interne). Le destinataire qui a déjà une copie
+  choisit : **mettre à jour sa recette** (`accept` avec `mode: replace` — contenu de la fiche
+  remplacé, **favoris, note, réalisations et notes personnelles conservés** ; uniquement sur sa
+  propre copie reçue de la même recette d'origine), **garder les deux** (nouvelle recette), ou
+  **refuser**. Rien n'est jamais remplacé automatiquement.
+- `GET /v1/health` indique la version ; heure de réception à la milliseconde.
+- Commande `family privatize` (simulation par défaut, voir plus bas).
+- Compatibilité : l'application 1.6.0 fonctionne aussi avec la 0.2.0 (sans l'option « mettre à
+  jour », proposée seulement quand le serveur est en 0.2.1).
+
+## Conversion du catalogue familial en carnets privés (après validation de la 1.6.0)
+
+Rien n'est supprimé ni déplacé automatiquement. Étapes, chacune sur votre accord :
+
+1. Sauvegarde : `python -m app.admin backup`, puis `restore-test` sur cette sauvegarde.
+2. Simulation : `python -m app.admin family privatize` → nombre de copies par membre (rien n'est écrit).
+3. Application : `python -m app.admin family privatize --apply` → chaque membre reçoit, dans son
+   carnet privé, une **copie indépendante** de chaque recette familiale (photos copiées), avec SES
+   favoris, note et notes personnelles ; son journal, ses collections et ses publications sont
+   rattachés à sa copie. Rejouable sans doublon. Le catalogue familial reste intact.
+4. Vérification sur chaque téléphone (« Vérifier avec le serveur », recettes présentes, photos).
+5. Seulement ensuite, sur décision séparée : retrait du catalogue familial (membres retirés,
+   recettes familiales à la corbeille, restaurables 30 jours).
+
+---
+
+# Carnet Sync 0.2 — catalogue familial et carnet personnel (historique)
 
 Synchronisation privée de Mon Carnet sur le Synology. C'est un service distinct de Carnet Media.
 
@@ -181,7 +218,7 @@ et son dossier ne sont pas touchés, et aucun port n'est ouvert sur la Freebox.
 | 1 | Compte technique `carnet-sync`, sans aucun droit de connexion |
 | 2 | Dossier partagé `carnet-sync`, distinct de Carnet Media |
 | 3 | Numéro (UID) du compte technique, via le Planificateur de tâches (sans SSH) |
-| 4 | Projet Container Manager à partir de `docker-compose.yml` (image `ghcr.io/kabot83/carnet-sync:0.2.0`) |
+| 4 | Projet Container Manager à partir de `docker-compose.yml` (image `ghcr.io/kabot83/carnet-sync:0.2.1`) |
 | 5 | `setup` : votre compte, puis le catalogue familial ; puis `selftest`, `backup`, `restore-test` |
 | 6 | Reverse proxy HTTPS sur `carnetmedia.synology.me:8445` vers `localhost:8090`, avec le certificat Let's Encrypt existant |
 | 7 | Tests sur le réseau local depuis le PC (`curl.exe --resolve …`) |

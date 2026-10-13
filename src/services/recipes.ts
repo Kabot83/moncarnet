@@ -77,45 +77,98 @@ async function forNewRecipe(recipe: Recipe): Promise<Recipe> {
 
 type Obj = Record<string, unknown>
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+/** Champs tenus par l'application ou le serveur : jamais considérés comme un désaccord. */
+const BOOKKEEPING = new Set(['updatedAt', 'familyInfo'])
 
 /** Liste d'éléments à identifiant : les éléments touchés par l'utilisateur, le reste tel qu'à présent. */
-function rebaseList(base: Obj[], edited: Obj[], current: Obj[]): Obj[] {
+function rebaseList(base: Obj[], edited: Obj[], current: Obj[], path: string, clashes: string[], preferCurrent: boolean): Obj[] {
   const b = new Map(base.map((x) => [x.id, x]))
   const c = new Map(current.map((x) => [x.id, x]))
   const out: Obj[] = []
   for (const e of edited) {
     const bx = b.get(e.id)
+    const cx = c.get(e.id)
     if (bx && same(e, bx)) {
-      if (c.has(e.id)) out.push(c.get(e.id)!) // inchangé par l'utilisateur : version actuelle
-      continue // inchangé ici et supprimé entre-temps ailleurs : reste supprimé
+      if (cx) out.push(cx) // inchangé ici : version actuelle
+      continue // inchangé ici et supprimé ailleurs entre-temps : reste supprimé
     }
+    if (bx && cx && !same(cx, bx) && !same(cx, e)) {
+      clashes.push(`${path}[${String(e.id)}]`) // modifié ici ET ailleurs
+      out.push(preferCurrent ? cx : e)
+      continue
+    }
+    if (bx && !cx) clashes.push(`${path}[${String(e.id)}]`) // modifié ici, supprimé ailleurs : gardé, signalé
     out.push(e)
   }
   const kept = new Set(edited.map((x) => x.id))
-  for (const x of current) if (!kept.has(x.id) && !b.has(x.id)) out.push(x) // ajouté entre-temps (autre appareil)
+  for (const x of current) {
+    if (kept.has(x.id)) continue
+    const bx = b.get(x.id)
+    if (!bx) out.push(x) // ajouté ailleurs entre-temps : conservé
+    else if (!same(x, bx)) {
+      clashes.push(`${path}[${String(x.id)}]`) // supprimé ici, modifié ailleurs : gardé, signalé
+      out.push(x)
+    }
+  }
   return out
 }
 
 /**
- * Éditeur ouvert pendant qu'une synchronisation modifiait la recette : seules les modifications
- * faites dans l'éditeur sont appliquées sur la version actuelle (rien de ce qui a été reçu n'est
- * écrasé). `base` = recette à l'ouverture de l'éditeur.
+ * Éditeur (ou brouillon) commencé sur une version `base`, alors que la recette a changé depuis
+ * (synchronisation entre appareils) : seules les modifications faites dans l'éditeur sont
+ * appliquées sur la version actuelle ; rien de ce qui a été reçu n'est écrasé. Un même élément
+ * modifié des deux côtés est signalé dans `clashes` (jamais tranché en silence) : la version de
+ * l'éditeur est retenue, ou celle reçue si `preferCurrent`.
  */
-export function rebaseEdit(base: Recipe, edited: Recipe, current: Recipe): Recipe {
+export function rebaseEditDetailed(base: Recipe, edited: Recipe, current: Recipe, preferCurrent = false): { recipe: Recipe; clashes: string[] } {
+  const clashes: string[] = []
   const out: Obj = { ...current }
   const B = base as unknown as Obj
   const E = edited as unknown as Obj
   const C = current as unknown as Obj
   for (const k of new Set([...Object.keys(E), ...Object.keys(B)])) {
-    if (same(E[k], B[k])) continue
-    if ((k === 'ingredients' || k === 'steps') && Array.isArray(E[k]) && Array.isArray(B[k]) && Array.isArray(C[k])) out[k] = rebaseList(B[k] as Obj[], E[k] as Obj[], C[k] as Obj[])
-    else if (k === 'notes' && E[k] && B[k] && C[k]) {
+    if (BOOKKEEPING.has(k) || same(E[k], B[k])) continue
+    if ((k === 'ingredients' || k === 'steps') && Array.isArray(E[k]) && Array.isArray(B[k]) && Array.isArray(C[k])) {
+      out[k] = rebaseList(B[k] as Obj[], E[k] as Obj[], C[k] as Obj[], k, clashes, preferCurrent)
+    } else if (k === 'notes' && E[k] && B[k] && C[k]) {
       const n: Obj = { ...(C[k] as Obj) }
-      for (const sub of Object.keys(E[k] as Obj)) if (!same((E[k] as Obj)[sub], (B[k] as Obj)[sub])) n[sub] = (E[k] as Obj)[sub]
+      for (const sub of Object.keys(E[k] as Obj)) {
+        const [e, b, c] = [(E[k] as Obj)[sub], (B[k] as Obj)[sub], (C[k] as Obj)[sub]]
+        if (same(e, b)) continue
+        if (!same(c, b) && !same(c, e)) {
+          clashes.push(`notes.${sub}`)
+          if (preferCurrent) continue
+        }
+        n[sub] = e
+      }
       out[k] = n
-    } else out[k] = E[k]
+    } else {
+      if (!same(C[k], B[k]) && !same(C[k], E[k])) {
+        clashes.push(k)
+        if (preferCurrent) continue
+      }
+      out[k] = E[k]
+    }
   }
-  return out as unknown as Recipe
+  return { recipe: out as unknown as Recipe, clashes }
+}
+
+export const rebaseEdit = (base: Recipe, edited: Recipe, current: Recipe): Recipe => rebaseEditDetailed(base, edited, current).recipe
+
+/** Libellé lisible d'un désaccord (« Description », « Ingrédient « crème » »…). */
+export function clashLabel(path: string, r: Recipe): string {
+  const m = /^(ingredients|steps)\[(.+)\]$/.exec(path)
+  if (m) {
+    if (m[1] === 'ingredients') return `Ingrédient « ${r.ingredients.find((i) => i.id === m[2])?.name ?? '?'} »`
+    const n = r.steps.findIndex((x) => x.id === m[2])
+    return n >= 0 ? `Étape ${n + 1}` : 'Une étape'
+  }
+  const L: Record<string, string> = {
+    title: 'Titre', description: 'Description', servings: 'Nombre de parts', prepTime: 'Préparation', cookTime: 'Cuisson', restTime: 'Repos',
+    category: 'Catégorie', difficulty: 'Difficulté', tags: 'Étiquettes', source: 'Source', sourceUrl: 'Lien', nutrition: 'Nutrition',
+    'notes.tips': 'Astuces', mainPhotoId: 'Photo principale', galleryPhotoIds: 'Galerie', cookedWeightG: 'Poids après cuisson',
+  }
+  return L[path] ?? (path.startsWith('notes.') ? 'Mes notes' : path)
 }
 
 /** Valide puis enregistre une recette (création ou mise à jour). */

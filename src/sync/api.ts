@@ -76,6 +76,8 @@ export interface TransferSummary {
   created_at: number
   expires_at: number
   has_cover: boolean
+  /** Recette d'origine (serveur 0.2.1+) : reconnaît une nouvelle version d'une recette déjà reçue. */
+  source_key?: string | null
 }
 
 export interface FamilyConflict {
@@ -109,7 +111,9 @@ export interface SyncApi {
   lookupUser(login: string): Promise<{ login: string; display_name: string } | null>
   sendTransfer(recipient: string, kind: 'recipe' | 'post', id: string, includeTips: boolean): Promise<{ id: string }>
   inbox(): Promise<TransferSummary[]>
-  acceptTransfer(id: string): Promise<{ id: string }>
+  /** `replace` : met à jour ma copie déjà reçue (`targetId`) ; sinon nouvelle recette. */
+  acceptTransfer(id: string, opts?: { mode: 'new' | 'replace'; targetId?: string }): Promise<{ id: string; mode?: string }>
+  transferCover(id: string): Promise<Blob | null>
   declineTransfer(id: string): Promise<void>
 }
 
@@ -192,7 +196,11 @@ export function httpSyncApi(baseUrl: string, tokens: TokenSource, fetchImpl: typ
     },
     sendTransfer: (recipient, kind, id, includeTips) => json('POST', '/v1/transfers', { recipient, kind, id, include_tips: includeTips }),
     inbox: () => json('GET', '/v1/transfers/inbox'),
-    acceptTransfer: (id) => json('POST', `/v1/transfers/${enc(id)}/accept`),
+    acceptTransfer: (id, opts) => json('POST', `/v1/transfers/${enc(id)}/accept`, opts ? { mode: opts.mode, target_id: opts.targetId } : undefined),
+    transferCover: async (id) => {
+      const r = await call('GET', `/v1/transfers/${enc(id)}/cover`)
+      return r.status === 404 ? null : r.blob()
+    },
     declineTransfer: (id) => json('POST', `/v1/transfers/${enc(id)}/decline`),
   }
 }

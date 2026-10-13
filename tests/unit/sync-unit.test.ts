@@ -43,7 +43,7 @@ describe('nouvelles recettes', () => {
     expect((await saveRecipe(emptyRecipe({ title: 'Locale' }))).space).toBeUndefined()
   })
 
-  it('synchronisation active : familiale par défaut, « Garder privée » respecté, modification inchangée', async () => {
+  it('ancien réglage 1.5.x « familiale par défaut » (supprimé par la 1.6.0 à la synchronisation) : une modification ne déplace jamais une recette', async () => {
     await db.settings.put({ key: NEW_RECIPE_SPACE_KEY, value: 'family' })
     const f = await saveRecipe(emptyRecipe({ title: 'Familiale' }))
     expect(f.space).toBe('family')

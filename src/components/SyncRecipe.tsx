@@ -1,9 +1,10 @@
 /**
- * Recette et synchronisation familiale : indication « Familiale » / « Privée », auteur, verrou,
- * déplacement entre le catalogue familial et le carnet personnel.
- * Rien ne s'affiche tant que la synchronisation n'est pas active (carnet local comme avant).
+ * Recette et synchronisation : chaque compte a son carnet PRIVÉ (synchronisé entre ses appareils).
+ * Mentions : « Reçue de … » pour une copie reçue, « Familiale » pour les anciennes recettes du
+ * catalogue familial (jusqu'à leur conversion en copies privées), « Non synchronisée » pour la
+ * démonstration. Rien ne s'affiche tant que la synchronisation n'est pas active.
  */
-import { CloudOff, Lock, LockOpen, Users } from 'lucide-react'
+import { CloudOff, Inbox, Lock, LockOpen, Users } from 'lucide-react'
 import { useConfirm, useToast } from '@/components/ui/Feedback'
 import { relativeTime } from '@/lib/format'
 import type { Recipe } from '@/models/types'
@@ -24,17 +25,28 @@ export function SpaceBadge({ recipe, className = '' }: { recipe: Recipe; classNa
         Non synchronisée
       </span>
     )
-  return isFamily(recipe) ? (
-    <span className={`inline-flex items-center gap-0.5 text-terra ${className}`} title="Visible par la famille">
-      <Users size={12} strokeWidth={2} />
-      Familiale
-    </span>
-  ) : (
-    <span className={`inline-flex items-center gap-0.5 text-faint ${className}`} title="Visible de vous seul">
-      <Lock size={11} strokeWidth={2} />
-      Privée
-    </span>
-  )
+  if (isFamily(recipe))
+    return (
+      <span className={`inline-flex items-center gap-0.5 text-terra ${className}`} title="Ancien catalogue familial : partagée et modifiable par les membres">
+        <Users size={12} strokeWidth={2} />
+        Familiale
+      </span>
+    )
+  if (recipe.receivedFrom)
+    return (
+      <span className={`inline-flex items-center gap-0.5 text-muted ${className}`} title={`Copie reçue de ${recipe.receivedFrom.name}`}>
+        <Inbox size={11} strokeWidth={2} />
+        Reçue
+      </span>
+    )
+  return null // privée : le cas normal, sans mention
+}
+
+/** « Reçue de Jona le 13 octobre » (copie indépendante). */
+export function ReceivedLine({ recipe }: { recipe: Recipe }) {
+  const r = recipe.receivedFrom
+  if (!r) return null
+  return <p className="mt-1 text-xs text-muted">Reçue de {r.name} {relativeTime(r.at)} · copie indépendante, modifiable librement</p>
 }
 
 /** Ligne d'information d'une recette familiale (auteur, dernier modificateur, verrou). */
@@ -42,7 +54,7 @@ export function FamilyLine({ recipe }: { recipe: Recipe }) {
   const s = useSync()
   const info = infoOf(recipe)
   if (syncActive(s) && recipe.isDemo)
-    return <p className="mt-1 text-xs text-muted">Recette de démonstration : elle reste sur ce téléphone et n’est jamais synchronisée. Pour la partager, menu ⋮ → « En faire une recette familiale ».</p>
+    return <p className="mt-1 text-xs text-muted">Recette de démonstration : elle reste sur ce téléphone et n’est jamais synchronisée. Pour la garder dans votre carnet, menu ⋮ → « En faire ma recette ».</p>
   if (!syncActive(s) || !isFamily(recipe) || !info) return null
   const parts = [info.createdBy && `Ajoutée par ${info.createdBy.name}`, info.updatedBy && info.updatedAt && `modifiée par ${info.updatedBy.name} ${relativeTime(info.updatedAt * 1000)}`].filter(Boolean)
   return (
@@ -59,12 +71,12 @@ export function lockedForMe(recipe: Recipe, login: string | undefined, role: str
   return l && l.login !== login && role !== 'admin' ? l.name : null
 }
 
-/** Actions du menu de la fiche : déplacer, verrouiller. `Item` = élément de menu de la page. */
+/** Actions du menu de la fiche : démonstration → ma recette ; anciennes recettes familiales : garder privée, verrou. */
 export function FamilyMenuItems({ recipe, close, Item }: { recipe: Recipe; close: () => void; Item: (p: { icon: typeof Users; label: string; onClick: () => void }) => React.ReactNode }) {
   const s = useSync()
   const confirm = useConfirm()
   const toast = useToast()
-  if (!syncActive(s) || !s.family) return null
+  if (!syncActive(s)) return null
   const run = async (f: () => Promise<unknown>, ok: string) => {
     try {
       await f()
@@ -78,28 +90,19 @@ export function FamilyMenuItems({ recipe, close, Item }: { recipe: Recipe; close
     const adopt = async () => {
       close()
       const yes = await confirm({
-        title: 'En faire une recette familiale ?',
-        message: `Cette recette de démonstration deviendra une vraie recette, partagée avec « ${s.family!.name} » (fiche, photos, astuces). Vos favoris et notes restent privés.`,
-        confirmLabel: 'Partager avec la famille',
+        title: 'En faire ma recette ?',
+        message: 'Cette recette de démonstration deviendra une recette de votre carnet privé, synchronisée entre vos appareils, avec ses photos.',
+        confirmLabel: 'Garder dans mon carnet',
       })
-      if (yes) await run(() => syncService.adoptDemoRecipe(recipe.id, 'family'), 'Recette ajoutée au catalogue familial')
+      if (yes) await run(() => syncService.adoptDemoRecipe(recipe.id, 'personal'), 'Recette ajoutée à votre carnet')
     }
-    return <>{Item({ icon: Users, label: 'En faire une recette familiale', onClick: () => void adopt() })}</>
+    return <>{Item({ icon: Lock, label: 'En faire ma recette', onClick: () => void adopt() })}</>
   }
+  if (!s.family || !isFamily(recipe)) return null // plus aucune nouvelle recette familiale
   const info = infoOf(recipe)
   const mine = info?.createdBy?.login === s.user?.login
   const admin = s.family.role === 'admin'
   const others = s.family.members.length - 1
-
-  const toFamily = async () => {
-    close()
-    const yes = await confirm({
-      title: `Partager avec « ${s.family!.name} » ?`,
-      message: `La recette, ses ingrédients, étapes, photos et astuces seront visibles et modifiables par ${others > 0 ? `${others} autre(s) membre(s)` : 'les membres de la famille'}. Vos favoris, note et notes personnelles restent privés.`,
-      confirmLabel: 'Partager',
-    })
-    if (yes) await run(() => syncService.moveRecipe(recipe.id, 'family'), 'Recette ajoutée au catalogue familial')
-  }
 
   const toPersonal = async () => {
     close()
@@ -121,7 +124,6 @@ export function FamilyMenuItems({ recipe, close, Item }: { recipe: Recipe; close
     }, locked ? 'Recette déverrouillée' : 'Recette verrouillée : seuls vous et l’administrateur pourrez la modifier')
   }
 
-  if (!isFamily(recipe)) return <>{Item({ icon: Users, label: 'Partager avec la famille', onClick: () => void toFamily() })}</>
   return (
     <>
       {(mine || admin) && Item({ icon: Lock, label: 'Retirer du catalogue familial (garder privée)', onClick: () => void toPersonal() })}

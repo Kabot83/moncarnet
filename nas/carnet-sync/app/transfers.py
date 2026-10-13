@@ -13,8 +13,10 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +24,8 @@ from .auth import new_id
 from .config import Settings
 from .db import Database, now
 from .spaces import Access
-from .sync import blob_path, copy_blob
+from .fields import personal_part
+from .sync import blob_path, copy_blob, write_simple
 
 RECIPE_SHARED_FIELDS = (
     'title', 'description', 'category', 'tags', 'prepTime', 'cookTime', 'restTime', 'servings', 'difficulty',
@@ -36,6 +39,17 @@ class TransferError(Exception):
     def __init__(self, code: str, message: str, status: int = 422):
         super().__init__(message)
         self.code, self.message, self.status = code, message, status
+
+
+def source_key(sender_id: str, kind: str, source_id: str) -> str:
+    """Identifiant opaque et stable de la recette d'origine (même expéditeur, même recette) : permet
+    au destinataire de reconnaître une nouvelle version d'une recette déjà reçue, sans rien révéler."""
+    return 'src_' + hashlib.sha256(f'{sender_id}:{kind}:{source_id}'.encode()).hexdigest()[:24]
+
+
+def _key_of(t: dict) -> str | None:
+    src = json.loads(t['payload']).get('__source')
+    return source_key(t['sender_id'], t['kind'], src) if src else None
 
 
 def _frozen_dir(s: Settings, tid: str) -> Path:
@@ -120,6 +134,7 @@ def _view(db: Database, t: dict, role: str) -> dict:
     return {
         'id': t['id'], 'kind': t['kind'], 'title': t['title'], 'status': t['status'], 'has_cover': bool(t['cover_sha256']),
         'created_at': t['created_at'], 'expires_at': t['expires_at'], 'result_id': t['result_id'],
+        'source_key': _key_of(t),
         ('sender' if role == 'recipient' else 'recipient'): other,
     }
 
@@ -170,7 +185,12 @@ def cover(db: Database, s: Settings, user_id: str, tid: str) -> tuple[Path, str]
     return (p, t['cover_mime'] or 'image/webp') if p.exists() else None
 
 
-def accept(db: Database, s: Settings, a: Access, user: dict, tid: str) -> dict:
+def accept(db: Database, s: Settings, a: Access, user: dict, tid: str, mode: str = 'new', target_id: str | None = None) -> dict:
+    """`mode` : « new » (nouvelle recette, par défaut) ou « replace » (mettre à jour MA copie déjà
+    reçue de la même recette d'origine : contenu de la fiche remplacé, données personnelles —
+    favori, note, réalisations, notes personnelles — conservées). Jamais de remplacement implicite."""
+    if mode not in ('new', 'replace'):
+        raise TransferError('invalid_mode', 'Mode d’acceptation inconnu.')
     t = _mine(db, user['id'], tid)
     if t['status'] == 'accepted':
         return {'id': t['result_id'], 'already': True}  # acceptation répétée : aucun doublon
@@ -180,7 +200,7 @@ def accept(db: Database, s: Settings, a: Access, user: dict, tid: str) -> dict:
     payload.pop('__source', None)
     photos = payload.pop('photos', [])
     sender = db.one('SELECT login, display_name FROM users WHERE id = ?', (t['sender_id'],))
-    ts_ms = now() * 1000
+    ts_ms = int(time.time() * 1000)  # à la milliseconde : distingue deux réceptions rapprochées
     fdir = _frozen_dir(s, tid)
 
     # Photos : copie indépendante dans l'espace du destinataire, identifiants nouveaux et stables.
@@ -191,8 +211,28 @@ def accept(db: Database, s: Settings, a: Access, user: dict, tid: str) -> dict:
         id_map[p['id']] = new_pid
         photo_records.append((new_pid, {'id': new_pid, 'sha256': p['sha256'], 'thumbSha256': p.get('thumbSha256') or p['sha256'], 'mime': p.get('mime') or 'image/webp', 'width': p.get('width') or 0, 'height': p.get('height') or 0, 'createdAt': ts_ms, 'isDemo': False}))
 
-    received = {'login': sender['login'], 'name': sender['display_name'], 'at': ts_ms, 'transferId': tid}
-    if t['kind'] == 'recipe':
+    key = _key_of(t)
+    received = {'login': sender['login'], 'name': sender['display_name'], 'at': ts_ms, 'transferId': tid, **({'sourceKey': key} if key else {})}
+    if mode == 'replace':
+        if t['kind'] != 'recipe' or not target_id or not key:
+            raise TransferError('invalid_target', 'Remplacement impossible pour cet envoi.')
+        old = db.one("SELECT data FROM records WHERE space_id = ? AND collection = 'recipes' AND id = ? AND deleted = 0", (a.personal, target_id))
+        old_data = json.loads(old['data']) if old else None
+        if not old_data or (old_data.get('receivedFrom') or {}).get('sourceKey') != key:
+            # Uniquement une copie de MA recette personnelle, reçue de la même recette d'origine.
+            raise TransferError('invalid_target', 'Cette recette n’est pas une version reçue de la même recette.', 409)
+    if t['kind'] == 'recipe' and mode == 'replace':
+        coll, new_id_ = 'recipes', target_id
+        keep = personal_part(old_data)
+        data = {
+            **payload, 'id': target_id, 'createdAt': old_data.get('createdAt', ts_ms), 'updatedAt': ts_ms, 'isDemo': False,
+            'variantOf': None, **{k: v for k, v in keep.items() if k != 'notes'}, 'receivedFrom': received,
+            'notes': {**(payload.get('notes') or {}), **{k: v for k, v in keep['notes'].items()}, 'tips': (payload.get('notes') or {}).get('tips', '')},
+            'mainPhotoId': id_map.get(payload.get('mainPhotoId') or ''),
+            'galleryPhotoIds': [id_map[x] for x in payload.get('galleryPhotoIds') or [] if x in id_map],
+            'steps': [{**st, 'photoId': id_map.get(st.get('photoId') or '')} for st in payload.get('steps') or []],
+        }
+    elif t['kind'] == 'recipe':
         coll, new_id_ = 'recipes', f"r_{tid[2:]}"
         data = {
             **payload, 'id': new_id_, 'createdAt': ts_ms, 'updatedAt': ts_ms, 'favorite': False, 'toTry': True, 'rating': 0,
@@ -225,10 +265,12 @@ def accept(db: Database, s: Settings, a: Access, user: dict, tid: str) -> dict:
         for pid, pdata in photo_records:
             if not c.execute("SELECT 1 FROM records WHERE space_id = ? AND collection = 'photos' AND id = ?", (target, pid)).fetchone():
                 c.execute(ins, (target, 'photos', pid, Database.next_rev(c), json.dumps(pdata, ensure_ascii=False), user['id'], t, user['id'], t))
-        if not c.execute('SELECT 1 FROM records WHERE space_id = ? AND collection = ? AND id = ?', (target, coll, new_id_)).fetchone():
+        if mode == 'replace':
+            write_simple(c, target, coll, new_id_, user['id'], json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(',', ':')))
+        elif not c.execute('SELECT 1 FROM records WHERE space_id = ? AND collection = ? AND id = ?', (target, coll, new_id_)).fetchone():
             c.execute(ins, (target, coll, new_id_, Database.next_rev(c), json.dumps(data, ensure_ascii=False), user['id'], t, user['id'], t))
         c.execute("UPDATE transfers SET status = 'accepted', decided_at = ?, result_id = ? WHERE id = ?", (now(), new_id_, tid))
-    return {'id': new_id_, 'already': False}
+    return {'id': new_id_, 'already': False, 'mode': mode}
 
 
 def decline(db: Database, s: Settings, user_id: str, tid: str) -> None:

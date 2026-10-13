@@ -50,6 +50,11 @@ class MissingIn(BaseModel):
     space: str = Field(default='personal', max_length=10)
 
 
+class AcceptIn(BaseModel):
+    mode: str = Field(default='new', max_length=10)
+    target_id: str | None = Field(default=None, max_length=300)
+
+
 class LockIn(BaseModel):
     locked: bool
 
@@ -127,7 +132,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get('/v1/health')
     def health() -> dict:
-        return {'status': 'ok', 'service': 'carnet-sync'}
+        return {'status': 'ok', 'service': 'carnet-sync', 'version': VERSION}
 
     # --- Comptes -------------------------------------------------------------
     @app.post('/v1/auth/login')
@@ -272,8 +277,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return FileResponse(found[0], media_type=found[1])
 
     @app.post('/v1/transfers/{tid}/accept')
-    def accept(tid: str, cur: tuple = Depends(current)) -> dict:
-        return transfers.accept(db, s, acc(cur), cur[0], tid)
+    def accept(tid: str, body: AcceptIn | None = None, cur: tuple = Depends(current)) -> dict:
+        b = body or AcceptIn()
+        return transfers.accept(db, s, acc(cur), cur[0], tid, b.mode, b.target_id)
 
     @app.post('/v1/transfers/{tid}/decline', status_code=204)
     def decline(tid: str, cur: tuple = Depends(current)) -> None:
