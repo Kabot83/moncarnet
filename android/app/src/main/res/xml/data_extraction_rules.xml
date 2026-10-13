@@ -3,15 +3,18 @@
   Android 12 et suivants. Sauvegarde Android dans le cloud : limitée à 25 Mo par application (au-delà,
   RIEN n'est sauvegardé). On en exclut donc les gros fichiers pour que la base des recettes reste
   sauvegardée : vidéos (récupérables depuis le NAS) et copie de sécurité locale (doublon de la base).
-  Le jeton du NAS est exclu partout : sa clé de chiffrement (AndroidKeyStore) ne quitte pas le téléphone.
+  Le jeton du NAS et la session Carnet Sync sont exclus partout : leur clé de chiffrement
+  (AndroidKeyStore) ne quitte pas le téléphone.
 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="carnet-videos/" />
         <exclude domain="file" path="securite/" />
         <exclude domain="sharedpref" path="carnet_media.xml" />
+        <exclude domain="sharedpref" path="carnet_sync.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="carnet_media.xml" />
+        <exclude domain="sharedpref" path="carnet_sync.xml" />
     </device-transfer>
 </data-extraction-rules>

@@ -3,6 +3,12 @@ import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useSafeNavigate } from '@/hooks/useOverlayHistory'
 import { Sheet } from './ui/Sheet'
+import { useSync } from '@/sync/instance'
+import type { SyncState } from '@/sync/service'
+
+/** Point discret sur « Réglages » : modifications en attente faute de réseau, conflit, reconnexion. */
+const needsAttention = (s: SyncState) =>
+  s.status === 'revoked' || s.status === 'needs-migration' || s.status === 'error' || s.conflicts > 0 || (s.status === 'offline' && s.pending > 0)
 
 const TABS = [
   { to: '/', label: 'Accueil', icon: Home, end: true },
@@ -20,6 +26,7 @@ export function BottomNav() {
   const location = useLocation()
   const [addOpen, setAddOpen] = useState(false)
   const showFab = FAB_PAGES.some((re) => re.test(location.pathname))
+  const attention = needsAttention(useSync())
   return (
     <>
       {showFab && (
@@ -51,8 +58,9 @@ export function BottomNav() {
               >
                 {({ isActive }) => (
                   <>
-                    <span className={`grid h-8 w-14 place-items-center rounded-full transition-colors ${isActive || also?.test(location.pathname) ? 'bg-terra-soft' : ''}`}>
+                    <span className={`relative grid h-8 w-14 place-items-center rounded-full transition-colors ${isActive || also?.test(location.pathname) ? 'bg-terra-soft' : ''}`}>
                       <Icon size={21} strokeWidth={isActive || also?.test(location.pathname) ? 2 : 1.6} />
+                      {to === '/reglages' && attention && <span aria-label="Synchronisation à vérifier" className="absolute top-1 right-3.5 size-2 rounded-full bg-terra" />}
                     </span>
                     <span className="leading-none">{label}</span>
                   </>

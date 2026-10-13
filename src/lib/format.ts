@@ -43,6 +43,14 @@ export function relativeDays(ts: number | null | undefined): string {
   return `il y a ${y} an${y > 1 ? 's' : ''}`
 }
 
+/** « aujourd'hui à 14:32 », « hier à 09:05 », « il y a 3 jours »… */
+export function relativeTime(ts: number | null | undefined): string {
+  if (!ts) return 'jamais'
+  const d = relativeDays(ts)
+  const hm = new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+  return d === "aujourd'hui" || d === 'hier' ? `${d} à ${hm}` : d
+}
+
 function startOfDay(ts: number) {
   const d = new Date(ts)
   d.setHours(0, 0, 0, 0)

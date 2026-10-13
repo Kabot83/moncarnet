@@ -25,6 +25,7 @@ import {
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { CollectionPicker } from '@/components/CollectionPicker'
+import { FamilyLine, FamilyMenuItems, SpaceBadge, isFamily } from '@/components/SyncRecipe'
 import { IngredientScaler } from '@/components/IngredientScaler'
 import { JournalEntrySheet } from '@/components/JournalEntrySheet'
 import { NotesSection } from '@/components/NotesSection'
@@ -91,7 +92,9 @@ export default function RecipePage() {
     setMenuOpen(false)
     const ok = await confirm({
       title: 'Supprimer cette recette ?',
-      message: `« ${recipe.title} », son journal (${journal.length} réalisation${journal.length > 1 ? 's' : ''}) et ses photos seront supprimés définitivement de ce téléphone.`,
+      message: isFamily(recipe)
+        ? `« ${recipe.title} » sera retirée du catalogue familial pour tous les membres et placée dans la corbeille familiale (restaurable 30 jours). Votre journal (${journal.length} réalisation${journal.length > 1 ? 's' : ''}) est supprimé de ce téléphone.`
+        : `« ${recipe.title} », son journal (${journal.length} réalisation${journal.length > 1 ? 's' : ''}) et ses photos seront supprimés définitivement de ce téléphone.`,
       confirmLabel: 'Supprimer',
       danger: true,
     })
@@ -161,8 +164,10 @@ export default function RecipePage() {
           <p className="eyebrow">
             {categoryLabel(recipe.category)} · {difficultyLabel(recipe.difficulty)}
             {recipe.isDemo && <span className="ml-2 rounded-full bg-sunken px-2 py-0.5 text-[10px] text-muted normal-case">Démonstration</span>}
+            <SpaceBadge recipe={recipe} className="ml-2 text-[11px] normal-case tracking-normal" />
           </p>
           <h1 className="mt-1.5 font-serif text-[2rem] leading-[1.15] font-semibold">{recipe.title}</h1>
+          <FamilyLine recipe={recipe} />
           {parent && (
             <p className="mt-1 text-sm text-muted">
               Variante de{' '}
@@ -398,6 +403,7 @@ export default function RecipePage() {
             }}
           />
           <MenuItem icon={Share2} label="Partager en texte" onClick={() => (setMenuOpen(false), void share())} />
+          <FamilyMenuItems recipe={recipe} close={() => setMenuOpen(false)} Item={(p) => <MenuItem key={p.label} {...p} />} />
           <MenuItem icon={Trash2} label="Supprimer" danger onClick={() => void remove()} />
         </nav>
       </Sheet>

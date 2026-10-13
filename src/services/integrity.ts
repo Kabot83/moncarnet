@@ -16,13 +16,21 @@
  * Une désinstallation ou « Effacer les données » supprime tout, y compris ces copies : seule une
  * sauvegarde ZIP exportée hors du téléphone protège de ces cas.
  */
-import { db } from '@/db/db'
+import { DB_NAME, db } from '@/db/db'
 import { isNative } from '@/platform/native'
 import { type ParsedBackup, applyRestore, exportBackup, readBackup } from './backup'
 
-const MARKER_FILE = 'securite/repere.json'
-const SNAPSHOT_FILE = 'securite/copie-auto.zip'
-const SNAPSHOT_PREVIOUS = 'securite/copie-auto-precedente.zip'
+/**
+ * Dossier propre à la base ouverte : « securite/ » pour le carnet historique (inchangé depuis
+ * 1.4.1) ; un sous-dossier par compte Carnet Sync supplémentaire. La copie d'un compte ne peut
+ * donc jamais être restaurée dans la base d'un autre.
+ */
+export function securityDir(name: string = db.name): string {
+  return name === DB_NAME ? 'securite' : `securite/base-${name.replace(/[^A-Za-z0-9_-]/g, '_')}`
+}
+const MARKER_FILE = `${securityDir()}/repere.json`
+const SNAPSHOT_FILE = `${securityDir()}/copie-auto.zip`
+const SNAPSHOT_PREVIOUS = `${securityDir()}/copie-auto-precedente.zip`
 const SETTINGS_KEY = 'integrity'
 
 export interface IntegrityMarker {
@@ -80,7 +88,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /** Écriture par tranches dans un fichier temporaire, puis remplacement : jamais de copie à moitié écrite. */
-async function writeBlob(path: string, blob: Blob): Promise<void> {
+export async function writeBlob(path: string, blob: Blob): Promise<void> {
   const { Filesystem, Data } = await fs()
   const bytes = new Uint8Array(await blob.arrayBuffer())
   const tmp = `${path}.tmp`

@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ChefHat, ChevronRight, Clapperboard, Database, Info, Monitor, Moon, ShoppingBasket, Sun, User } from 'lucide-react'
+import { ChefHat, ChevronRight, Clapperboard, Database, Info, Monitor, Moon, ShoppingBasket, Sun, User, Users } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { StorageStatus } from '@/components/StorageStatus'
@@ -9,10 +9,24 @@ import { Segmented, Switch } from '@/components/ui/Fields'
 import { Page } from '@/components/ui/Layout'
 import { db, storageEstimate } from '@/db/db'
 import { seedDemoData } from '@/db/seed'
-import { formatBytes, relativeDays } from '@/lib/format'
+import { formatBytes, relativeDays, relativeTime } from '@/lib/format'
 import { deleteDemoData } from '@/services/recipes'
 import { photosSize } from '@/services/photos'
 import { updateSettings, useSettings } from '@/services/settings'
+import { useSync } from '@/sync/instance'
+import type { SyncState } from '@/sync/service'
+
+function syncDetail(s: SyncState): string {
+  if (s.status === 'unavailable') return 'Dans l’application Android'
+  if (s.status === 'signed-out') return 'Catalogue familial partagé — non connecté'
+  if (s.status === 'needs-migration') return 'Première synchronisation à préparer'
+  if (s.status === 'revoked') return 'Session expirée — reconnexion nécessaire'
+  if (s.conflicts) return `${s.conflicts} modification(s) à revoir`
+  if (s.status === 'offline') return s.pending ? `${s.pending} modification(s) en attente de connexion` : 'Hors connexion'
+  if (s.status === 'error') return 'Erreur — voir le détail'
+  if (s.status === 'syncing') return 'Synchronisation…'
+  return `${s.family?.name ?? 'Synchronisé'} · ${relativeTime(s.lastSyncAt)}`
+}
 
 export function SettingsGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -38,6 +52,7 @@ function NavRow({ to, icon, label, detail }: { to: string; icon: ReactNode; labe
 
 export default function SettingsPage() {
   const settings = useSettings()
+  const sync = useSync()
   const toast = useToast()
   const confirm = useConfirm()
   const demoCount = useLiveQuery(() => db.recipes.filter((r) => r.isDemo).count(), [], 0)
@@ -99,6 +114,7 @@ export default function SettingsPage() {
       </SettingsGroup>
 
       <SettingsGroup title="Mes données">
+        <NavRow to="/reglages/synchronisation" icon={<Users size={18} />} label="Synchronisation familiale" detail={syncDetail(sync)} />
         <NavRow
           to="/reglages/sauvegarde"
           icon={<Database size={18} />}

@@ -5,7 +5,7 @@ import { IntegrityGuard } from './components/IntegrityGuard'
 import { TimerEngine, TimersDock } from './components/TimersDock'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { LoadingBlock } from './components/ui/Spinner'
-import { requestPersistentStorage } from './db/db'
+import { DB_NAME, db, requestPersistentStorage } from './db/db'
 import { seedDemoData } from './db/seed'
 import { startShareReceiver } from './platform/shareReceiver'
 import { resumeNasImports } from './social/nasMedia'
@@ -15,6 +15,7 @@ import { collectOrphanPhotos } from './services/photos'
 import { getSettings, updateSettings, useSettings } from './services/settings'
 import { initNative, isNative, setSystemBarsDark } from './platform/native'
 import { initKeyboard } from './platform/keyboard'
+import { startSync } from './sync/instance'
 import HomePage from './pages/HomePage'
 import RecipesPage from './pages/RecipesPage'
 import RecipePage from './pages/RecipePage'
@@ -36,6 +37,10 @@ const AboutPage = lazy(() => import('./pages/AboutPage'))
 const SocialLibraryPage = lazy(() => import('./pages/SocialLibraryPage'))
 const SocialPostPage = lazy(() => import('./pages/SocialPostPage'))
 const VideoSettingsPage = lazy(() => import('./pages/VideoSettingsPage'))
+const SyncSettingsPage = lazy(() => import('./pages/SyncSettingsPage'))
+const SyncMigrationPage = lazy(() => import('./pages/SyncMigrationPage'))
+const SyncConflictsPage = lazy(() => import('./pages/SyncConflictsPage'))
+const SyncTrashPage = lazy(() => import('./pages/SyncTrashPage'))
 
 /** Démarrage unique (même si React monte deux fois en mode strict). */
 let boot: Promise<void> | null = null
@@ -46,12 +51,15 @@ function bootstrap() {
     const s = await getSettings()
     if (!s.demoSeeded) {
       await updateSettings({ demoSeeded: true })
-      await seedDemoData()
+      // Carnet d'un autre compte ou carnet vide après déconnexion : jamais de démonstration d'office.
+      if (db.name === DB_NAME) await seedDemoData()
     }
     // PWA : demande de stockage persistant au navigateur. APK : inutile (toujours refusé par la
     // WebView) — la persistance y est vérifiée par IntegrityGuard.
     if (!isNative) void requestPersistentStorage()
     setTimeout(() => void collectOrphanPhotos(), 5000)
+    // Synchronisation familiale (si un compte est connecté) : en arrière-plan, sans bloquer l'ouverture.
+    void startSync()
   })()
   return boot
 }
@@ -145,6 +153,10 @@ export function App() {
           <Route path="/reglages/sauvegarde" element={<BackupPage />} />
           <Route path="/reglages/a-propos" element={<AboutPage />} />
           <Route path="/reglages/videos" element={<VideoSettingsPage />} />
+          <Route path="/reglages/synchronisation" element={<SyncSettingsPage />} />
+          <Route path="/reglages/synchronisation/migration" element={<SyncMigrationPage />} />
+          <Route path="/reglages/synchronisation/conflits" element={<SyncConflictsPage />} />
+          <Route path="/reglages/synchronisation/corbeille" element={<SyncTrashPage />} />
           <Route path="*" element={<HomePage />} />
         </Routes>
       </Suspense>

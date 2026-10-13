@@ -4,4 +4,5 @@
     <exclude domain="file" path="carnet-videos/" />
     <exclude domain="file" path="securite/" />
     <exclude domain="sharedpref" path="carnet_media.xml" />
+    <exclude domain="sharedpref" path="carnet_sync.xml" />
 </full-backup-content>

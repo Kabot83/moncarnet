@@ -20,6 +20,8 @@ import type {
   SocialPost,
   Timer,
 } from '@/models/types'
+import { activeDbName, PRIMARY_DB, readBinding } from '@/sync/binding'
+import { trackDeletions } from '@/sync/engine'
 
 export interface SettingRow {
   key: string
@@ -53,7 +55,7 @@ export interface FoodMemory {
   updatedAt: number
 }
 
-export const DB_NAME = 'mon-carnet'
+export const DB_NAME = PRIMARY_DB
 export const DB_VERSION = 4
 
 export class CarnetDB extends Dexie {
@@ -143,7 +145,15 @@ export class CarnetDB extends Dexie {
   }
 }
 
-export const db = new CarnetDB()
+/**
+ * Base du compte actif (Carnet Sync) : « mon-carnet » sans compte ou pour le premier compte de
+ * l'appareil ; une base distincte pour tout autre compte, ou après une déconnexion.
+ */
+export const db = new CarnetDB(activeDbName())
+
+// Compte connecté : chaque suppression faite par l'application est notée comme volontaire dès
+// l'ouverture (seules celles-là seront transmises au serveur).
+if (readBinding().currentUserId) trackDeletions(db)
 
 /** Estimation de l'espace utilisé / disponible (si le navigateur le permet). */
 export async function storageEstimate(): Promise<{ usage: number; quota: number; persisted: boolean } | null> {

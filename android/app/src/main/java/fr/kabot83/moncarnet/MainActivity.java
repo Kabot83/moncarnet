@@ -38,6 +38,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(MonCarnetUiPlugin.class);
         registerPlugin(ShareReceiverPlugin.class);
         registerPlugin(CarnetMediaPlugin.class);
+        registerPlugin(CarnetSyncPlugin.class);
         // Partage reçu à froid : mis en file avant même le démarrage de l'interface.
         // Activité recréée (savedInstanceState) : le partage est déjà en file, l'Intent est
         // seulement neutralisé (Capacitor rappelle onNewIntent avec l'Intent de lancement).

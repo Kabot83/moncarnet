@@ -16,6 +16,8 @@ import { formatNumber, parseIngredientLine, parseQuantity } from '@/lib/units'
 import { CATEGORIES, DIFFICULTIES, type Draft, type Ingredient, NOTE_FIELDS, type Recipe, type Step } from '@/models/types'
 import { deleteDraft, saveDraft } from '@/services/drafts'
 import { ValidationError, emptyIngredient, emptyRecipe, emptyStep, saveRecipe } from '@/services/recipes'
+import { lockedForMe } from '@/components/SyncRecipe'
+import { syncActive, useSync } from '@/sync/instance'
 import { useSettings } from '@/services/settings'
 
 const UNIT_SUGGESTIONS = ['g', 'kg', 'ml', 'cl', 'l', 'c. à soupe', 'c. à café', 'pincée', 'gousse', 'tranche', 'sachet', 'brin', 'boîte', 'pot', 'feuille']
@@ -35,6 +37,7 @@ export default function RecipeEditPage() {
   const toast = useToast()
   const confirm = useConfirm()
   const settings = useSettings()
+  const sync = useSync()
   const draftId = id ? `edit:${id}` : (params.get('draft') ?? 'new')
 
   const [recipe, setRecipe] = useState<Recipe | null>(null)
@@ -100,6 +103,8 @@ export default function RecipeEditPage() {
   if (!recipe) return <LoadingBlock />
 
   const set = (patch: Partial<Recipe>) => setRecipe((r) => (r ? { ...r, ...patch } : r))
+  const familyOn = syncActive(sync) && !!sync.family && !recipe.isDemo
+  const lockedBy = familyOn ? lockedForMe(recipe, sync.user?.login, sync.family?.role) : null
   const setIng = (i: number, patch: Partial<Ingredient>) => set({ ingredients: recipe.ingredients.map((x, k) => (k === i ? { ...x, ...patch } : x)) })
   const setStep = (i: number, patch: Partial<Step>) => set({ steps: recipe.steps.map((x, k) => (k === i ? { ...x, ...patch } : x)) })
 
@@ -153,6 +158,11 @@ export default function RecipeEditPage() {
         }
       />
       <main className="mx-auto max-w-2xl space-y-8 px-4 pt-4 pb-40">
+        {lockedBy && (
+          <div className="rounded-2xl bg-terra-soft p-3 text-sm" role="status">
+            Recette verrouillée par {lockedBy} : vos modifications seront enregistrées dans une copie privée, l’originale reste inchangée pour la famille.
+          </div>
+        )}
         {restored && (
           <div className="rounded-2xl bg-sage-soft p-3 text-sm" role="status">
             Brouillon restauré : vous reprenez là où vous vous étiez arrêté.
@@ -270,6 +280,9 @@ export default function RecipeEditPage() {
 
         <section className="space-y-4">
           <h2 className="font-serif text-xl font-semibold">Mes notes</h2>
+          {familyOn && (recipe.space === 'family' || (!id && recipe.space !== 'personal')) && (
+            <p className="text-sm text-muted">Les astuces sont partagées avec la famille ; vos autres notes restent privées.</p>
+          )}
           {NOTE_FIELDS.map((f) => (
             <TextArea key={f.id} label={f.label} value={recipe.notes[f.id]} onChange={(e) => set({ notes: { ...recipe.notes, [f.id]: e.target.value } })} />
           ))}
@@ -283,7 +296,22 @@ export default function RecipeEditPage() {
           <div className="divide-y divide-line rounded-2xl bg-paper px-4">
             <Switch label="Favorite" checked={recipe.favorite} onChange={(v) => set({ favorite: v })} />
             <Switch label="À essayer" description="Recette pas encore testée." checked={recipe.toTry} onChange={(v) => set({ toTry: v })} />
+            {familyOn && !id && (
+              <Switch
+                label="Garder privée"
+                description={recipe.space === 'personal' ? 'Visible de vous seul.' : `Partagée avec « ${sync.family!.name} » à l’enregistrement.`}
+                checked={recipe.space === 'personal'}
+                onChange={(v) => set({ space: v ? 'personal' : 'family' })}
+              />
+            )}
           </div>
+          {familyOn && id && (
+            <p className="text-sm text-muted">
+              {recipe.space === 'family'
+                ? `Recette familiale : vos modifications seront visibles par « ${sync.family!.name} ». Pour la garder privée, utilisez « Retirer du catalogue familial » dans le menu de la fiche.`
+                : 'Recette privée : visible de vous seul. Pour la partager, utilisez « Partager avec la famille » dans le menu de la fiche.'}
+            </p>
+          )}
         </section>
       </main>
 

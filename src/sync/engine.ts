@@ -252,6 +252,8 @@ export class SyncEngine {
   private running: Promise<SyncReport> | null = null
   private now: () => number
   private family = false
+  /** Compte et famille vus lors de la dernière synchronisation. */
+  lastMe: Me | null = null
 
   constructor(
     readonly db: CarnetDB,
@@ -316,6 +318,7 @@ export class SyncEngine {
 
   private async run(): Promise<SyncReport> {
     const me = await this.checkAccount() // avant tout échange de données
+    this.lastMe = me
     const report: SyncReport = { pushed: 0, pulled: 0, conflicts: [], recovered: [], rejected: [], removedFromFamily: 0, waitingForFamily: 0 }
     this.family = !!me.family
     const known = (await this.meta.state.get('familyKnown'))?.value === true
@@ -721,6 +724,42 @@ export class SyncEngine {
       }
     }
     return { ok: !missingOnServer.length && !different.length, checked, missingOnServer, different }
+  }
+
+  /** Nombre de modifications locales pas encore envoyées (lecture seule, sans réseau). */
+  async countPending(): Promise<number> {
+    let n = 0
+    for (const coll of SYNCED) {
+      const metas = new Map((await this.meta.meta.where('collection').equals(coll).toArray()).map((m) => [m.id, m]))
+      const pmetas = coll === 'recipes' ? new Map((await this.meta.meta.where('collection').equals('recipeMeta').toArray()).map((m) => [m.id, m])) : null
+      for (const row of await this.table(coll).toArray()) {
+        if (!this.included(row)) continue
+        const id = String(row[KEY[coll]])
+        const m = metas.get(id)
+        const space = coll === 'recipes' ? this.recipeSpace(row, m) : m && !m.deleted ? m.space : 'personal'
+        if (!m || m.deleted || m.hash !== (await fingerprint(coll, row, space))) n++
+        else if (coll === 'recipes' && space === 'family') {
+          const pm = pmetas!.get(id)
+          const p = personalOf(row)
+          if (pm ? !pm.deleted && pm.hash !== (await sha256Hex(canonical(p))) : !isDefaultPersonal(p)) n++
+        }
+      }
+      n += await this.meta.tombstones.where('collection').equals(coll).count()
+    }
+    return n
+  }
+
+  /** Recettes synchronisées, par espace. */
+  async syncedCounts(): Promise<{ family: number; personal: number }> {
+    const ms = await this.meta.meta.where('collection').equals('recipes').toArray()
+    return { family: ms.filter((m) => !m.deleted && m.space === 'family').length, personal: ms.filter((m) => !m.deleted && m.space === 'personal').length }
+  }
+
+  /** Partie commune et révision connue d'une recette familiale (résolution d'un conflit). */
+  async familyRecipeState(id: string): Promise<{ data: Row; rev: number } | null> {
+    const [row, m] = await Promise.all([this.table('recipes').get(id), this.meta.meta.get(['recipes', id])])
+    if (!row || !m || m.deleted || m.space !== 'family') return null
+    return { data: familyShared(row), rev: m.rev }
   }
 
   async conflictLog(): Promise<ConflictLog[]> {

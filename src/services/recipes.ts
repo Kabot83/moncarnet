@@ -60,8 +60,24 @@ export class ValidationError extends Error {
   }
 }
 
+/** Clé (réglages) de l'espace des nouvelles recettes quand la synchronisation familiale est active. */
+export const NEW_RECIPE_SPACE_KEY = 'syncNewRecipeSpace'
+
+/**
+ * Nouvelle recette (création, copie, variante) : synchronisation familiale active → catalogue
+ * familial par défaut, sauf choix « Garder privée ». Une restauration de sauvegarde ne passe pas
+ * par ici : elle ne partage jamais rien d'office.
+ */
+async function forNewRecipe(recipe: Recipe): Promise<Recipe> {
+  if (await db.recipes.get(recipe.id)) return recipe
+  const { familyInfo: _info, receivedFrom: _from, ...rest } = recipe
+  const def = (await db.settings.get(NEW_RECIPE_SPACE_KEY))?.value
+  return { ...rest, space: recipe.space ?? (def === 'family' ? 'family' : undefined) }
+}
+
 /** Valide puis enregistre une recette (création ou mise à jour). */
 export async function saveRecipe(recipe: Recipe, { touch = true } = {}): Promise<Recipe> {
+  recipe = await forNewRecipe(recipe)
   const cleaned: Recipe = {
     ...recipe,
     title: recipe.title.trim(),
@@ -157,9 +173,7 @@ export function buildVariant(recipe: Recipe, scale: ScaleState, title?: string):
 }
 
 export async function saveVariant(recipe: Recipe, scale: ScaleState, title?: string): Promise<Recipe> {
-  const v = buildVariant(recipe, scale, title)
-  await saveRecipe(v, { touch: false })
-  return v
+  return saveRecipe(buildVariant(recipe, scale, title), { touch: false })
 }
 
 /** Remplace les quantités de l'original par les quantités ajustées (action confirmée). */
@@ -187,8 +201,7 @@ export async function duplicateRecipe(recipe: Recipe): Promise<Recipe> {
     lastCookedAt: null,
     isDemo: false,
   }
-  await saveRecipe(copy, { touch: false })
-  return copy
+  return saveRecipe(copy, { touch: false })
 }
 
 // ---------------------------------------------------------------------------

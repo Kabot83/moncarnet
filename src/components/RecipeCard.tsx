@@ -6,6 +6,7 @@ import { type Recipe, categoryLabel, difficultyLabel } from '@/models/types'
 import { toggleFavorite } from '@/services/recipes'
 import { Photo, PhotoPlaceholder } from './ui/Layout'
 import { Stars } from './ui/Fields'
+import { SpaceBadge } from './SyncRecipe'
 
 interface CardProps {
   recipe: Recipe
@@ -91,6 +92,7 @@ export const RecipeCardGrid = memo(function RecipeCardGrid({ recipe, selected, o
           )}
           <span>{difficultyLabel(recipe.difficulty)}</span>
           <Stars value={recipe.rating} size={12} />
+          <SpaceBadge recipe={recipe} />
         </div>
       </div>
     </Wrapper>
@@ -125,8 +127,9 @@ export const RecipeCardList = memo(function RecipeCardList({ recipe, selected, o
             </span>
           )}
         </p>
-        <div className="mt-1">
+        <div className="mt-1 flex items-center gap-2 text-xs">
           <Stars value={recipe.rating} size={12} />
+          <SpaceBadge recipe={recipe} />
         </div>
       </div>
       {!onSelect && <FavButton recipe={recipe} className="text-muted" />}
